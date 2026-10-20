@@ -362,6 +362,26 @@ check(avgT.indexOf(rowOf("A")) < avgT.indexOf(rowOf("B")), "A ranks above B on a
 check(avgT.every(r => r.dropped.length === 0), "average ranking never drops scores");
 console.log(`  ${avgT.map(r => `${r.name} ${r.avg.toFixed(1)}`).join("  ")}`);
 
+/* ---------- 5b. ranking on games won ---------- */
+console.log("\nGames won ranking");
+
+// P and Q meet four times. P wins three 9-8 and loses 0-9 (27 points, 3 won);
+// Q loses three 8-9 and wins 9-0 (33 points, 1 won)
+const fourGames = [[[0, 2], [1, 3]], [[0, 3], [1, 2]], [[1, 4], [0, 5]], [[1, 5], [0, 4]]];
+const wonRes = { 0: { a: 9, b: 8 }, 1: { a: 9, b: 8 }, 2: { a: 8, b: 9 }, 3: { a: 9, b: 0 } };
+const wonBase = { players: ["P", "Q", "R", "S", "U", "V"], rounds: fourGames, results: {}, countBest: 4, extras: null };
+for (const ranking of ["avg", "best"]) {
+  setT({ ...wonBase, ranking, measure: "points" }); setResults(wonRes);
+  const byPts = table().map(r => r.name);
+  setT({ ...wonBase, ranking, measure: "wins" }); setResults(wonRes);
+  const wt = table(), byWon = wt.map(r => r.name);
+  const P = wt.find(r => r.name === "P"), Q = wt.find(r => r.name === "Q");
+  check(P.allWins === 3 && Q.allWins === 1, `${ranking}: P won 3, Q won 1, got ${P.allWins}, ${Q.allWins}`);
+  check(byPts.indexOf("Q") < byPts.indexOf("P"), `${ranking}: on points Q (more points) is above P`);
+  check(byWon.indexOf("P") < byWon.indexOf("Q"), `${ranking}: on games won P is above Q`);
+  console.log(`  ${ranking.padEnd(4)} points: ${byPts.join(" ")}   games won: ${byWon.join(" ")}`);
+}
+
 /* ---------- 6. add a game: least-played first ---------- */
 console.log("\nAdd a game");
 

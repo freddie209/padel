@@ -18,7 +18,7 @@ test.js       node test harness — runs the real code out of index.html
 
 State lives in two `localStorage` keys, both per-device:
 
-- `padel-tournament-v2` — the live tournament `{players, rounds, extras, results, countBest, format, genders, star, starts, final, courts, slot, target, limitGames, limit, ranking, left}` (everything after `countBest` is optional, so older saves still load)
+- `padel-tournament-v2` — the live tournament `{players, rounds, extras, results, countBest, format, genders, star, starts, final, courts, slot, target, limitGames, limit, ranking, measure, left}` (everything after `countBest` is optional, so older saves still load)
 - `padel-names-v2` — the last player list, starred index and genders, so setup is prefilled next time
 
 There is no sync. One person scores. If the shape of the stored object ever
@@ -114,8 +114,14 @@ setup, **Average** selected unless changed, never a forced choice.
 - `best` — the original rule: everyone ranked on the sum of their best
   `countBest` games (`min` of games played among active players); anyone
   with more has their lowest scores dropped, shown in their row.
-Saves from before this have no `ranking` and stay on `best`. Ties break on
-games won.
+Saves from before this have no `ranking` and stay on `best`.
+
+**What wins is chosen too (`T.measure`)**: "Winner is who has most: Points |
+Games won" on setup, Points by default. `points` ranks on points (total,
+average, or best-N total), ties on games won; `wins` ranks on games won
+(count, share of games won shown as %, or wins in the best N), ties on
+points. In best-N with `wins`, a player's best games are wins first, then
+highest score.
 
 **Add a game** (`addGame()`): one game per court for spare time at the end.
 `localSpace()` maps active players to 0..m−1 with their games so far
@@ -160,7 +166,7 @@ menu → Install app.
 Live at https://freddie209.github.io/padel/ (GitHub Pages, `master`, root).
 Push to `master` to deploy.
 
-**After changing `index.html`, bump `CACHE` in `sw.js`** (`padel-v5` → `v6`…).
+**After changing `index.html`, bump `CACHE` in `sw.js`** (`padel-v6` → `v7`…).
 The service worker is cache-first, so without a bump an installed copy keeps
 serving the old version. With a bump, the new worker installs in the
 background on the next open and the page reloads itself once

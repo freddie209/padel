@@ -415,6 +415,8 @@ const LIMIT_NAME = { 0: "No limit", 30: "30 min", 45: "45 min", 60: "1 hour", 75
 // how the table ranks people who've played different numbers of games:
 // "avg" points per game (the default), or "best" N games with the rest dropped
 let ranking = "avg";
+// what wins: "points" scored (the default) or "wins", games won
+let measure = "points";
 // editing a tournament in progress reuses the setup screen; editFrom[i] is
 // the tournament player each row started as, or -1 for someone new
 let editing = false, editFrom = [], editSnap = null;
@@ -468,31 +470,39 @@ function dur(mins) {
 // Ranking: "avg" (the default for new tournaments) ranks on average points
 // per game, so playing more or fewer games doesn't matter. "best" ranks
 // everyone on the sum of their best countBest games and drops the rest.
-// Older saves have no ranking and keep "best". Ties break on games won.
+// Older saves have no ranking and keep "best".
+// T.measure picks what's counted: "points" (the default, ties broken on games
+// won) or "wins", games won (ties broken on points). With "best", a player's
+// best games are the wins first, then the highest scores.
 function standings() {
-  const avg = T.ranking === "avg";
-  const scores = T.players.map(() => []);
-  const wins = new Array(T.players.length).fill(0);
+  const avg = T.ranking === "avg", byWins = T.measure === "wins";
+  const games = T.players.map(() => []);
   T.rounds.forEach((g, idx) => {
     const s = T.results[idx];
     if (!s) return;
-    g[0].forEach(p => { scores[p].push(s.a); if (s.a > s.b) wins[p]++; });
-    g[1].forEach(p => { scores[p].push(s.b); if (s.b > s.a) wins[p]++; });
+    g[0].forEach(p => games[p].push({ pts: s.a, won: s.a > s.b }));
+    g[1].forEach(p => games[p].push({ pts: s.b, won: s.b > s.a }));
   });
+  const sumOf = (list, k) => list.reduce((a, x) => a + (k === "won" ? +x.won : x.pts), 0);
   return activeIdx().map(p => {
-    const sorted = [...scores[p]].sort((x, y) => y - x);
+    const sorted = [...games[p]].sort((x, y) => (byWins ? y.won - x.won : 0) || y.pts - x.pts);
     const kept = avg ? sorted : sorted.slice(0, T.countBest);
-    const sum = sorted.reduce((a, b) => a + b, 0);
-    return {
+    const n = sorted.length;
+    const r = {
       name: T.players[p], p,
-      total: kept.reduce((a, b) => a + b, 0),
-      avg: sorted.length ? sum / sorted.length : 0,
-      played: sorted.length,
-      wins: wins[p],
-      dropped: avg ? [] : sorted.slice(T.countBest),
+      total: sumOf(kept, "pts"),
+      avg: n ? sumOf(sorted, "pts") / n : 0,
+      wins: sumOf(kept, "won"),
+      rate: n ? sumOf(sorted, "won") / n : 0,
+      allWins: sumOf(sorted, "won"),
+      played: n,
+      dropped: avg ? [] : sorted.slice(T.countBest).map(x => x.pts),
       extra: T.extras ? T.extras.includes(p) : false
     };
-  }).sort((x, y) => (avg ? y.avg - x.avg : y.total - x.total) || y.wins - x.wins || x.name.localeCompare(y.name));
+    // what's ranked on first, then the tie-break
+    r.key = byWins ? [avg ? r.rate : r.wins, avg ? r.avg : r.total] : [avg ? r.avg : r.total, avg ? r.rate : r.wins];
+    return r;
+  }).sort((x, y) => y.key[0] - x.key[0] || y.key[1] - x.key[1] || x.name.localeCompare(y.name));
 }
 
 // players still in the tournament; anyone removed by an edit keeps their
@@ -607,7 +617,10 @@ function renderSetup() {
       <button class="tab" data-act="pts" data-v="${points + 1}">+</button></div>
     <div class="setrow"><span class="eyebrow">Rank the table by</span>
       <button class="tab wide" data-on="${ranking === "avg" ? 1 : 0}" data-act="rank" data-v="avg">Average</button>
-      <button class="tab wide" data-on="${ranking === "best" ? 1 : 0}" data-act="rank" data-v="best">Best games</button></div>`;
+      <button class="tab wide" data-on="${ranking === "best" ? 1 : 0}" data-act="rank" data-v="best">Best games</button></div>
+    <div class="setrow"><span class="eyebrow">Winner is who has most</span>
+      <button class="tab wide" data-on="${measure === "points" ? 1 : 0}" data-act="measure" data-v="points">Points</button>
+      <button class="tab wide" data-on="${measure === "wins" ? 1 : 0}" data-act="measure" data-v="wins">Games won</button></div>`;
 
   h += `<div class="eyebrow" style="margin-bottom:9px">Who's playing</div>`;
 
@@ -729,8 +742,8 @@ function fitPoints(n) {
 
 // how the summary explains uneven game counts, by ranking
 const fairText = k => ranking === "avg"
-  ? "The table ranks on average points per game, so that's fair."
-  : `Only each player's best ${k} scores count.`;
+  ? `The table ranks on ${measure === "wins" ? "the share of games won" : "average points per game"}, so that's fair.`
+  : `Only each player's best ${k} games count.`;
 
 // editing after games have been scored: say what stays and what's rebuilt
 const midEdit = () => editing && T && Object.keys(T.results).length > 0;
@@ -743,7 +756,9 @@ function editSummaryHTML(n) {
   else h += `no games need changing`;
   if (points !== target()) h += `<br>new games are first to <b>${points}</b>; scores already in stay as they are`;
   if (ch.removed) h += `<br>${ch.removed === 1 ? "the player you removed leaves" : ch.removed + " players you removed leave"} the table; their partners keep those scores`;
-  h += `<br>the table ranks on ${ranking === "avg" ? "average points per game" : "each player's best games"}`;
+  h += `<br>the table ranks on ${measure === "wins"
+    ? (ranking === "avg" ? "the share of games won" : "games won in each player's best games")
+    : (ranking === "avg" ? "average points per game" : "points in each player's best games")}`;
   return h;
 }
 
@@ -874,31 +889,35 @@ function renderPlay() {
     if (played === 0) {
       h += `<div class="empty">No scores yet.<br>Play game 1, then tap the pair that won.</div>`;
     } else {
-      const rows = standings(), avg = T.ranking === "avg";
-      const level = rows.every(r => r.played === rows[0].played);
+      const rows = standings(), avg = T.ranking === "avg", byWins = T.measure === "wins";
+      const level = rows.every(r => r.played === rows[0].played), share = avg && !level;
       rows.forEach((r, i) => {
-        let sub = `${r.played} played &middot; ${r.wins} won`;
+        // the big number is what's ranked on; the line under it has the rest
+        const big = byWins ? (share ? Math.round(r.rate * 100) + "%" : r.wins) : (share ? r.avg.toFixed(1) : r.total);
+        let sub = `${r.played} played &middot; ${r.allWins} won`;
+        if (byWins || share) sub += ` &middot; ${r.total} points`;
         if (r.dropped.length) sub += ` &middot; <span class="drop">dropped ${r.dropped.join(", ")}</span>`;
-        if (avg && !level) sub += ` &middot; ${r.total} points`;
         h += `<div class="row" data-lead="${i === 0 ? 1 : 0}">
             <span class="rank">${i + 1}</span>
             <div class="who"><div class="nm">${esc(r.name)}</div><div class="sub">${sub}</div></div>
-            <span class="avg">${avg && !level ? r.avg.toFixed(1) : r.total}</span></div>`;
+            <span class="avg">${big}</span></div>`;
       });
       const gp = gamesEach();
       const more = activeIdx().filter(p => gp[p] > T.countBest).map(p => esc(T.players[p]));
+      const what = byWins ? "games won" : "points";
       if (avg) {
-        h += `<div class="note">${level ? `Everyone has played ${rows[0].played}, so these are straight totals.`
-          : "Ranked on average points per game, because not everyone has played the same number yet."}</div>`;
+        h += `<div class="note">${level ? `Ranked on ${what}${byWins ? ", then points" : ", then games won"}. Everyone has played ${rows[0].played}, so these are straight totals.`
+          : byWins ? "Ranked on the share of games won, then average points, because not everyone has played the same number yet."
+          : "Ranked on average points per game, then games won, because not everyone has played the same number yet."}</div>`;
       } else if (more.length === 2 && Math.max(...gp) === T.countBest + 1) {
-        h += `<div class="note">Totals are each player's best ${T.countBest} games.
+        h += `<div class="note">Ranked on ${what} in each player's best ${T.countBest} games.
           ${more[0]} and ${more[1]} play one game more,
           so once they've played ${T.countBest + 1} their lowest score drops out.</div>`;
       } else if (more.length) {
-        h += `<div class="note">Totals are each player's best ${T.countBest} games.
+        h += `<div class="note">Ranked on ${what} in each player's best ${T.countBest} games.
           ${andList(more)} play more than that, so their lowest scores drop out.</div>`;
       } else {
-        h += `<div class="note">Everyone plays ${T.countBest} games, so totals are straight sums.</div>`;
+        h += `<div class="note">Ranked on ${what}${byWins ? ", then points" : ", then games won"}. Everyone plays ${T.countBest} games, so these are straight totals.</div>`;
       }
     }
   }
@@ -931,7 +950,7 @@ function createTournament() {
   T = { players: clean, rounds: built.rounds, extras: built.extras, results: {}, countBest: Math.min(...gp), format,
         genders: format === "any" ? null : cleanGenders(), star: pIdx >= 0 ? pIdx : null, starts: [0], final: null,
         courts: useCourts(clean.length), slot: built.slot, target: points, limitGames: lp ? lp.G : null,
-        limit, ranking };
+        limit, ranking, measure };
   saveT(); saveN();
   return true;
 }
@@ -940,18 +959,18 @@ function createTournament() {
 // setup screen before is kept to put back if you leave without saving.
 function startEdit() {
   syncInputs();
-  editSnap = { names, genders, priority, format, courts, points, limit, ranking };
+  editSnap = { names, genders, priority, format, courts, points, limit, ranking, measure };
   const act = activeIdx();
   names = act.map(p => T.players[p]);
   genders = act.map(p => (T.genders && T.genders[p]) || "");
   editFrom = [...act];
   priority = Math.max(0, act.indexOf(T.star));
   format = T.format || "any"; courts = T.courts || 1; points = target();
-  limit = T.limit || 0; ranking = T.ranking || "best";
+  limit = T.limit || 0; ranking = T.ranking || "best"; measure = T.measure || "points";
   editing = true; view = "setup"; showOpts = null; armed = null;
 }
 function endEdit() {
-  if (editSnap) ({ names, genders, priority, format, courts, points, limit, ranking } = editSnap);
+  if (editSnap) ({ names, genders, priority, format, courts, points, limit, ranking, measure } = editSnap);
   editSnap = null; editing = false; view = "play";
   saveN();
 }
@@ -981,7 +1000,7 @@ function saveEdit() {
     T.genders = T.players.map((_, p) => (T.genders && T.genders[p]) || "");
     rows.forEach(r => { T.genders[r.from] = r.g; });
   }
-  T.format = format; T.target = points; T.ranking = ranking; T.limit = limit;
+  T.format = format; T.target = points; T.ranking = ranking; T.measure = measure; T.limit = limit;
   T.courts = useCourts(rows.length);
   if (ch.structural || ch.courtsChanged) rebuildUnplayed(ch.structural);
   T.countBest = fewestGames();
@@ -1050,6 +1069,7 @@ app.addEventListener("click", e => {
   else if (act === "courts") { syncInputs(); courts = +v; saveN(); render(); }
   else if (act === "sex") { syncInputs(); genders[i] = genders[i] === "m" ? "f" : "m"; saveN(); render(); }
   else if (act === "rank") { syncInputs(); ranking = v; render(); }
+  else if (act === "measure") { syncInputs(); measure = v; render(); }
   else if (act === "add") { syncInputs(); names.push(""); genders.push(""); if (editing) editFrom.push(-1); saveN(); render(); app.querySelector(`.pin[data-i="${names.length - 1}"]`).focus(); }
   else if (act === "del") {
     syncInputs();
