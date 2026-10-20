@@ -19,7 +19,9 @@ test.js       node test harness — runs the real code out of index.html
 State lives in two `localStorage` keys, both per-device:
 
 - `padel-tournament-v2` — the live tournament `{players, rounds, extras, results, countBest, format, genders, star, starts, final, courts, slot, target, limitGames, limit, ranking, measure, left}` (everything after `countBest` is optional, so older saves still load)
-- `padel-names-v2` — the last player list, starred index and genders, so setup is prefilled next time
+- `padel-names-v2` — the last player list, starred index and genders, so setup is prefilled next time.
+  Courts, points, ranking and what wins are in the **Settings** dropdown on setup and start at
+  their defaults every visit (1 court, first to 9, average, most points) — not saved.
 
 There is no sync. One person scores. If the shape of the stored object ever
 changes, bump the key suffix rather than migrating.
@@ -67,7 +69,7 @@ with two or three boys (or girls) those pairs are left out. Game counts can
 differ by sex in both formats; best-N absorbs it. `mixedSummaryHTML()` mirrors
 `pairGroups()` — keep them in step.
 
-**Courts** (1–4 picker on setup, saved; capped at players ÷ 4): games are
+**Courts** (1–4 in Settings, default 1; capped at players ÷ 4): games are
 packed into time slots of up to that many games with nobody on two courts.
 `T.rounds` stays a flat list; `T.slot[i]` is game i's slot (older saves have
 none — one game per slot). On several courts `buildSchedule` tries 150
@@ -77,7 +79,7 @@ with the greedy `slotOnce` and first-fit `slotInOrder`. `benchScore` ranks
 fewest slots first, then bench runs. Part-full slots go last. Almost every
 case hits the minimum number of slots; `test.js` prints used/minimum.
 
-**Points to win** (`points`, −/+ on setup, 3–21, saved; stored as
+**Points to win** (`points`, −/+ in Settings, default 9, 3–21; stored as
 `T.target`): scoring chips, the winners' default and the eyebrow all follow
 it. Minutes per game scale with it (`minsPerGame`, 12 min at first to 9).
 
@@ -92,6 +94,12 @@ partners vary but not every pair plays together. `T.limitGames` makes
 another round add another limited block, avoiding partners already used.
 `fitPoints(n)` offers a lower points target that would fit the full
 schedule, shown as a button in the summary.
+
+**Games list** (Rounds tab): games are grouped by slot as "Game N", one card
+per court. The slot being played now is open under "Now playing"; the rest
+are bars (`gbar`, toggled via `expanded`) under "Up next" and "Played"
+(newest first), showing the scores once played. So scoring never needs a
+long scroll.
 
 **Another round** (`addRound()`, button at the bottom of Rounds, tap twice):
 builds the same format afresh and appends it, recording where it starts in
@@ -166,7 +174,7 @@ menu → Install app.
 Live at https://freddie209.github.io/padel/ (GitHub Pages, `master`, root).
 Push to `master` to deploy.
 
-**After changing `index.html`, bump `CACHE` in `sw.js`** (`padel-v6` → `v7`…).
+**After changing `index.html`, bump `CACHE` in `sw.js`** (`padel-v7` → `v8`…).
 The service worker is cache-first, so without a bump an installed copy keeps
 serving the old version. With a bump, the new worker installs in the
 background on the next open and the page reloads itself once

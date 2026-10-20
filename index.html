@@ -63,6 +63,15 @@ h1{font-size:26px;font-weight:800;letter-spacing:-.035em;line-height:.95;margin:
 .setrow .eyebrow{flex:1;}
 .setrow .tab{flex:none;width:44px;height:38px;padding:0;font-family:'DM Mono',monospace;}
 .setrow .tab.wide{width:auto;padding:0 12px;font-family:'Archivo',sans-serif;font-size:12px;}
+.setbar{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;text-align:left;
+  padding:11px 13px;border-radius:11px;background:var(--court);margin-bottom:16px;}
+.setbar .nm{display:block;font-size:14px;}
+.setbar .sub{display:block;margin-top:2px;}
+.setbar[data-on="1"]{border-radius:11px 11px 0 0;margin-bottom:0;}
+.chev{font-size:13px;color:var(--mute);flex:none;}
+.setpanel{background:var(--court);border-radius:0 0 11px 11px;padding:4px 13px 13px;margin-bottom:16px;}
+.setpanel .setrow .tab{background:var(--tile);}
+.setpanel .setrow .tab[data-on="1"]{background:var(--line);}
 .pval{width:44px;text-align:center;font-family:'DM Mono',monospace;font-size:17px;font-variant-numeric:tabular-nums;}
 .tgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
 .tgrid .opt{text-align:center;padding:12px 4px;font-size:13px;font-weight:600;}
@@ -138,6 +147,15 @@ h1{font-size:26px;font-weight:800;letter-spacing:-.035em;line-height:.95;margin:
 
 .empty{padding:26px 14px;text-align:center;color:var(--mute);font-size:13px;line-height:1.55;}
 .note{margin-top:14px;font-family:'DM Mono',monospace;font-size:10.5px;color:var(--mute);line-height:1.65;}
+.sec{margin:20px 0 9px;}
+.gbar{width:100%;display:flex;align-items:center;gap:10px;text-align:left;padding:12px 13px;
+  border-radius:11px;background:var(--court);margin-bottom:6px;}
+.gbar .nm{font-size:14px;font-weight:600;flex:none;}
+.gbar .nm i{font-style:normal;font-family:'DM Mono',monospace;font-size:10px;color:var(--mute);margin-left:4px;}
+.gsc{flex:1;min-width:0;text-align:right;font-family:'DM Mono',monospace;font-size:12px;color:var(--mute);
+  font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.gbar[data-on="1"]{background:var(--tile);}
+.gopen{margin:0 0 10px;}
 .more{width:100%;margin-top:14px;padding:13px;border-radius:11px;font-size:13px;font-weight:600;
   box-shadow:inset 0 0 0 1px var(--hair);color:var(--line);}
 .more[data-armed="1"]{background:var(--ball);color:var(--deep);box-shadow:none;}
@@ -406,7 +424,9 @@ const FORMATS = {
   same: { short: "Mixed + same", name: "Mixed + same-sex", desc: "Boy &amp; girl v boy &amp; girl, two boys v two boys, two girls v two girls." }
 };
 let format = "any", showOpts = null, genders = names.map(() => "");
-let courts = 1, points = 9;
+// courts, points, ranking and what wins live in the Settings dropdown and
+// start at their defaults every visit: 1 court, first to 9, average, points
+let courts = 1, points = 9, showSettings = false;
 // a time limit isn't saved either: every visit starts with none
 let limit = 0;
 const LIMITS = [0, 30, 45, 60, 75, 90, 120, 150, 180];
@@ -422,6 +442,8 @@ let measure = "points";
 let editing = false, editFrom = [], editSnap = null;
 let view = "setup", tab = "rounds";
 let open = null, winner = null, winScore = 9;
+// game slots opened from their bar on the games list
+const expanded = new Set();
 // the tournament's points to win; older saves were all first to 9
 const target = () => (T && T.target) || 9;
 let armed = null, armTimer = null;
@@ -430,13 +452,13 @@ try { const s = localStorage.getItem(T_KEY); if (s) { T = JSON.parse(s); view = 
 try {
   const s = localStorage.getItem(N_KEY);
   if (s) {
-    const d = JSON.parse(s); names = d.names || names; priority = d.priority ?? 0; courts = d.courts || 1; points = d.points || 9;
+    const d = JSON.parse(s); names = d.names || names; priority = d.priority ?? 0;
     genders =names.map((_, i) => (d.genders && d.genders[i]) || "");
   }
 } catch (e) { }
 
 const saveT = () => { try { T ? localStorage.setItem(T_KEY, JSON.stringify(T)) : localStorage.removeItem(T_KEY); } catch (e) { } };
-const saveN = () => { try { localStorage.setItem(N_KEY, JSON.stringify({ names, priority, genders, courts, points })); } catch (e) { } };
+const saveN = () => { try { localStorage.setItem(N_KEY, JSON.stringify({ names, priority, genders })); } catch (e) { } };
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const app = document.getElementById("app");
 
@@ -609,18 +631,30 @@ function renderSetup() {
   if (editing) h += `<button class="resume" data-act="cancel">&larr; Back without changing anything</button>`;
   else if (T) h += `<button class="resume" data-act="resume">&larr; Back to the tournament in progress</button>`;
 
-  h += `<div class="setrow"><span class="eyebrow">Courts</span>`;
+  h += `<button class="setbar" data-act="settings" data-on="${showSettings ? 1 : 0}">
+      <span><span class="nm">Settings</span><span class="sub">${courts === 1 ? "1 court" : courts + " courts"} &middot; first to ${points}
+        &middot; ${ranking === "avg" ? "average" : "best games"} &middot; most ${measure === "wins" ? "games won" : "points"}</span></span>
+      <span class="chev">${showSettings ? "&#9662;" : "&#9656;"}</span></button>`;
+  if (showSettings) {
+  h += `<div class="setpanel"><div class="setrow"><span class="eyebrow">Courts</span>`;
   for (let c = 1; c <= 4; c++) h += `<button class="tab" data-on="${courts === c ? 1 : 0}" data-act="courts" data-v="${c}">${c}</button>`;
   h += `</div><div class="setrow"><span class="eyebrow">Points to win a match</span>
       <button class="tab" data-act="pts" data-v="${points - 1}">&minus;</button>
       <span class="pval">${points}</span>
       <button class="tab" data-act="pts" data-v="${points + 1}">+</button></div>
-    <div class="setrow"><span class="eyebrow">Rank the table by</span>
+    <div class="setrow"><span class="eyebrow">If some play more games</span>
       <button class="tab wide" data-on="${ranking === "avg" ? 1 : 0}" data-act="rank" data-v="avg">Average</button>
       <button class="tab wide" data-on="${ranking === "best" ? 1 : 0}" data-act="rank" data-v="best">Best games</button></div>
+    <div class="hint" style="margin:-4px 0 12px">${ranking === "avg"
+      ? "The table uses each player's average per game, so playing more or fewer games doesn't help or hurt."
+      : "Everyone is ranked on the same number of games: their best ones. Anyone with extra games has their worst dropped."}</div>
     <div class="setrow"><span class="eyebrow">Winner is who has most</span>
       <button class="tab wide" data-on="${measure === "points" ? 1 : 0}" data-act="measure" data-v="points">Points</button>
-      <button class="tab wide" data-on="${measure === "wins" ? 1 : 0}" data-act="measure" data-v="wins">Games won</button></div>`;
+      <button class="tab wide" data-on="${measure === "wins" ? 1 : 0}" data-act="measure" data-v="wins">Games won</button></div>
+    <div class="hint" style="margin:-4px 0 2px">${measure === "wins"
+      ? "Most games won tops the table; points break ties."
+      : "Most points tops the table; games won break ties."}</div></div>`;
+  }
 
   h += `<div class="eyebrow" style="margin-bottom:9px">Who's playing</div>`;
 
@@ -836,34 +870,54 @@ function renderPlay() {
 
   if (tab === "rounds") {
     const starts = T.starts || [0];
-    T.rounds.forEach((g, idx) => {
-      const s = T.results[idx], isOpen = open === idx, isLive = !s && slot[idx] === liveSlot;
-      // on several courts the bench is everyone off every court, shown once per slot
-      const mates = T.rounds.filter((_, j) => slot[j] === slot[idx]);
-      const on = new Set(mates.flatMap(m => [...m[0], ...m[1]]));
-      const lastInSlot = slot[idx + 1] !== slot[idx];
-      const bench = lastInSlot ? activeIdx().filter(i => !on.has(i)) : [];
-      const court = idx - slot.indexOf(slot[idx]) + 1;
-      const label = multi ? `Game ${slot[idx] + 1} &middot; court ${court}` : `Game ${idx + 1}`;
+    // Games are grouped by time slot: "Game N", one card per court. The slot
+    // being played now stays open at the top; every other one folds into a
+    // bar you tap to open: what's to come under "Up next", and finished ones
+    // under "Played", newest first, so scoring never needs a long scroll.
+    const slotNos = [...new Set(slot)];
+    const gamesIn = sl => T.rounds.map((_, i) => i).filter(i => slot[i] === sl);
+    const slotDone = sl => gamesIn(sl).every(i => T.results[i]);
+    const cardsHTML = (sl, live) => {
+      const idxs = gamesIn(sl);
+      const on = new Set(idxs.flatMap(i => [...T.rounds[i][0], ...T.rounds[i][1]]));
+      let c = "";
+      idxs.forEach((idx, k) => {
+        const g = T.rounds[idx], s = T.results[idx], isOpen = open === idx, isLive = live && !s;
+        const label = multi ? `Game ${sl + 1} &middot; court ${k + 1}` : `Game ${sl + 1}`;
+        c += `<div class="card" data-live="${isLive ? 1 : 0}" data-done="${s && !isOpen ? 1 : 0}">
+          <div class="chead"><div class="eyebrow">${isLive ? "On court &middot; " + label.toLowerCase() : label}</div>`;
+        if (s && !isOpen) c += `<button class="final" data-act="edit" data-v="${idx}">${s.a}&ndash;${s.b} &middot; change</button>`;
+        c += `</div>` + matchHTML(idx, g, s);
+        // on several courts the bench is everyone off every court, shown once per slot
+        const bench = k === idxs.length - 1 ? activeIdx().filter(i => !on.has(i)) : [];
+        if (bench.length) c += `<div class="bench">bench &middot; ${bench.map(i => esc(nm(i))).join(", ")}</div>`;
+        c += askHTML(idx) + `</div>`;
+      });
+      return c;
+    };
+    const barHTML = sl => {
+      const idxs = gamesIn(sl), shown = expanded.has(sl) || idxs.includes(open);
+      const r = starts.indexOf(idxs[0]);
+      const info = slotDone(sl)
+        ? idxs.map(i => `${T.results[i].a}&ndash;${T.results[i].b}`).join(" &middot; ")
+        : multi ? `${idxs.length} courts` : T.rounds[idxs[0]].map(pr => pr.map(nm).map(esc).join(" &amp; ")).join(" v ");
+      let b = `<button class="gbar" data-act="slot" data-v="${sl}" data-on="${shown ? 1 : 0}">
+          <span class="nm">Game ${sl + 1}${starts.length > 1 && r > 0 ? ` <i>round ${r + 1}</i>` : ""}</span>
+          <span class="gsc">${info}</span><span class="chev">${shown ? "&#9662;" : "&#9656;"}</span></button>`;
+      if (shown) b += `<div class="gopen">${cardsHTML(sl, false)}</div>`;
+      return b;
+    };
+    const upcoming = slotNos.filter(sl => sl !== liveSlot && !slotDone(sl));
+    const finished = slotNos.filter(slotDone).reverse();
 
-      const r = starts.indexOf(idx);
-      if (starts.length > 1 && r >= 0)
-        h += `<div class="eyebrow" style="margin:${r ? 20 : 0}px 0 9px">Round ${r + 1}${r ? " &middot; everyone again" : ""}</div>`;
-
-      h += `<div class="card" data-live="${isLive ? 1 : 0}" data-done="${s && !isOpen ? 1 : 0}">
-        <div class="chead"><div class="eyebrow">${isLive ? "On court &middot; " + label.toLowerCase() : label}</div>`;
-      if (s && !isOpen) h += `<button class="final" data-act="edit" data-v="${idx}">${s.a}&ndash;${s.b} &middot; change</button>`;
-      h += `</div>`;
-      h += matchHTML(idx, g, s);
-      if (bench.length) h += `<div class="bench">bench &middot; ${bench.map(i => esc(nm(i))).join(", ")}</div>`;
-      h += askHTML(idx) + `</div>`;
-    });
+    if (liveSlot >= 0) h += `<div class="eyebrow sec" style="margin-top:0">Now playing</div>` + cardsHTML(liveSlot, true);
+    else if (total) h += `<div class="empty" style="padding:14px">Every game has a score.</div>`;
 
     // the final is optional, for fun, and never touches the table
     const F = T.final;
     if (F) {
       const s = F.result, isOpen = open === "final";
-      h += `<div class="eyebrow" style="margin:20px 0 9px">Final &middot; just for fun</div>
+      h += `<div class="eyebrow sec">Final &middot; just for fun</div>
         <div class="card" data-live="${!s ? 1 : 0}">
         <div class="chead"><div class="eyebrow">${T.genders ? "Top two boys &amp; top two girls" : "Top four"}</div>`;
       if (s && !isOpen) h += `<button class="final" data-act="edit" data-v="final">${s.a}&ndash;${s.b} &middot; change</button>`;
@@ -878,6 +932,8 @@ function renderPlay() {
         <div class="hint">Optional, just for fun &mdash; it doesn't change the table.</div>`;
     }
 
+    if (upcoming.length) h += `<div class="eyebrow sec">Up next</div>` + upcoming.map(barHTML).join("");
+
     const again = T.limitGames || (starts.length > 1 ? starts[1] : total), multiC = (T.courts || 1) > 1;
     h += `<button class="more" data-act="one" data-armed="${armed === "one" ? 1 : 0}">${armed === "one"
       ? "Tap again to add" : multiC ? "+ Add a game on each court" : "+ Add a game"}</button>
@@ -885,6 +941,7 @@ function renderPlay() {
       ? `Tap again to add ${again} games` : "+ Add another round"}</button>
       <div class="hint">Spare time at the end? Add a game: whoever has played least goes on, with new partners where possible.
         Or add a whole round, everyone again.${F ? " Either clears the final." : ""}</div>`;
+    if (finished.length) h += `<div class="eyebrow sec">Played</div>` + finished.map(barHTML).join("");
   } else {
     if (played === 0) {
       h += `<div class="empty">No scores yet.<br>Play game 1, then tap the pair that won.</div>`;
@@ -967,7 +1024,7 @@ function startEdit() {
   priority = Math.max(0, act.indexOf(T.star));
   format = T.format || "any"; courts = T.courts || 1; points = target();
   limit = T.limit || 0; ranking = T.ranking || "best"; measure = T.measure || "points";
-  editing = true; view = "setup"; showOpts = null; armed = null;
+  editing = true; view = "setup"; showOpts = null; showSettings = false; armed = null;
 }
 function endEdit() {
   if (editSnap) ({ names, genders, priority, format, courts, points, limit, ranking, measure } = editSnap);
@@ -1068,6 +1125,7 @@ app.addEventListener("click", e => {
   else if (act === "pts") { syncInputs(); points = Math.max(3, Math.min(21, +v)); saveN(); render(); }
   else if (act === "courts") { syncInputs(); courts = +v; saveN(); render(); }
   else if (act === "sex") { syncInputs(); genders[i] = genders[i] === "m" ? "f" : "m"; saveN(); render(); }
+  else if (act === "settings") { syncInputs(); showSettings = !showSettings; render(); }
   else if (act === "rank") { syncInputs(); ranking = v; render(); }
   else if (act === "measure") { syncInputs(); measure = v; render(); }
   else if (act === "add") { syncInputs(); names.push(""); genders.push(""); if (editing) editFrom.push(-1); saveN(); render(); app.querySelector(`.pin[data-i="${names.length - 1}"]`).focus(); }
@@ -1101,6 +1159,7 @@ app.addEventListener("click", e => {
   }
   else if (act === "resume") { view = "play"; render(); window.scrollTo(0, 0); }
   else if (act === "setup") { syncInputs(); view = "setup"; armed = null; render(); window.scrollTo(0, 0); }
+  else if (act === "slot") { if (expanded.has(+v)) expanded.delete(+v); else expanded.add(+v); if (open !== null && open !== "final" && slotsOf()[open] === +v) { open = null; winner = null; } render(); }
   else if (act === "tab") { tab = v; open = null; winner = null; render(); }
   else if (act === "edit") { open = v === "final" ? v : +v; winner = null; winScore = target(); render(); }
   else if (act === "side") {
