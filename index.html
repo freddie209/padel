@@ -62,6 +62,7 @@ h1{font-size:26px;font-weight:800;letter-spacing:-.035em;line-height:.95;margin:
 .setrow + .eyebrow{margin-top:16px;}
 .setrow .eyebrow{flex:1;}
 .setrow .tab{flex:none;width:44px;height:38px;padding:0;font-family:'DM Mono',monospace;}
+.setrow .tab.wide{width:auto;padding:0 12px;font-family:'Archivo',sans-serif;font-size:12px;}
 .pval{width:44px;text-align:center;font-family:'DM Mono',monospace;font-size:17px;font-variant-numeric:tabular-nums;}
 .tgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
 .tgrid .opt{text-align:center;padding:12px 4px;font-size:13px;font-weight:600;}
@@ -346,15 +347,17 @@ function buildSchedule(n, priority, genders, sameSex, courts = 1) {
 // same number as the format allows. Each court takes four of those who've
 // played least (then sat out longest), split into two partnerships that are
 // new if possible, so partners vary even though not every pair gets a game.
-// `avoid` is partnerships already played, for a second block.
-function buildLimited(n, genders, sameSex, courts, G, avoid = []) {
+// `avoid` is partnerships already played, for a second block. `start` carries
+// on from games already scheduled: {count, run} per player, so whoever has
+// played least, then sat out longest, goes first.
+function buildLimited(n, genders, sameSex, courts, G, avoid = [], start = null) {
   const key = (a, b) => a < b ? a + "-" + b : b + "-" + a;
   const kind = (a, b) => !genders ? "" : genders[a] !== genders[b] ? "mf" : genders[a];
   const ok = (a, b) => !genders || sameSex || genders[a] !== genders[b];
   const splits = [[0, 1, 2, 3], [0, 2, 1, 3], [0, 3, 1, 2]];
   let best = null, bs = Infinity;
   for (let t = 0; t < 60; t++) {
-    const count = new Array(n).fill(0), run = new Array(n).fill(0), used = {};
+    const count = start ? [...start.count] : new Array(n).fill(0), run = start ? [...start.run] : new Array(n).fill(0), used = {};
     avoid.forEach(([a, b]) => { used[key(a, b)] = (used[key(a, b)] || 0) + 1; });
     const slots = []; let made = 0, repeats = 0;
     while (made < G) {
@@ -409,6 +412,12 @@ let limit = 0;
 const LIMITS = [0, 30, 45, 60, 75, 90, 120, 150, 180];
 const LIMIT_SHORT = { 0: "None", 30: "30m", 45: "45m", 60: "1h", 75: "1&frac14;h", 90: "1&frac12;h", 120: "2h", 150: "2&frac12;h", 180: "3h" };
 const LIMIT_NAME = { 0: "No limit", 30: "30 min", 45: "45 min", 60: "1 hour", 75: "1&frac14; hours", 90: "1&frac12; hours", 120: "2 hours", 150: "2&frac12; hours", 180: "3 hours" };
+// how the table ranks people who've played different numbers of games:
+// "avg" points per game (the default), or "best" N games with the rest dropped
+let ranking = "avg";
+// editing a tournament in progress reuses the setup screen; editFrom[i] is
+// the tournament player each row started as, or -1 for someone new
+let editing = false, editFrom = [], editSnap = null;
 let view = "setup", tab = "rounds";
 let open = null, winner = null, winScore = 9;
 // the tournament's points to win; older saves were all first to 9
@@ -442,7 +451,7 @@ function setupIssue() {
       return `${FORMATS[format].name} needs at least <b>2</b> boys and <b>2</b> girls.`;
   }
   const n = cleanNames().length;
-  if (needsCut(n) && !limitedPlan(n))
+  if (!midEdit() && needsCut(n) && !limitedPlan(n))
     return `${LIMIT_NAME[limit]} isn't long enough for everyone to get a game. Try a longer time or fewer points.`;
   return null;
 }
@@ -456,56 +465,99 @@ function dur(mins) {
 }
 
 /* ============ scoring ============ */
+// Ranking: "avg" (the default for new tournaments) ranks on average points
+// per game, so playing more or fewer games doesn't matter. "best" ranks
+// everyone on the sum of their best countBest games and drops the rest.
+// Older saves have no ranking and keep "best". Ties break on games won.
 function standings() {
-  const n = T.players.length;
+  const avg = T.ranking === "avg";
   const scores = T.players.map(() => []);
-  const wins = new Array(n).fill(0);
+  const wins = new Array(T.players.length).fill(0);
   T.rounds.forEach((g, idx) => {
     const s = T.results[idx];
     if (!s) return;
     g[0].forEach(p => { scores[p].push(s.a); if (s.a > s.b) wins[p]++; });
     g[1].forEach(p => { scores[p].push(s.b); if (s.b > s.a) wins[p]++; });
   });
-  return T.players.map((name, p) => {
+  return activeIdx().map(p => {
     const sorted = [...scores[p]].sort((x, y) => y - x);
-    const kept = sorted.slice(0, T.countBest);
-    const dropped = sorted.slice(T.countBest);
+    const kept = avg ? sorted : sorted.slice(0, T.countBest);
+    const sum = sorted.reduce((a, b) => a + b, 0);
     return {
-      name, p,
+      name: T.players[p], p,
       total: kept.reduce((a, b) => a + b, 0),
-      played: scores[p].length,
+      avg: sorted.length ? sum / sorted.length : 0,
+      played: sorted.length,
       wins: wins[p],
-      dropped,
+      dropped: avg ? [] : sorted.slice(T.countBest),
       extra: T.extras ? T.extras.includes(p) : false
     };
-  }).sort((x, y) => y.total - x.total || y.wins - x.wins || x.name.localeCompare(y.name));
+  }).sort((x, y) => (avg ? y.avg - x.avg : y.total - x.total) || y.wins - x.wins || x.name.localeCompare(y.name));
 }
+
+// players still in the tournament; anyone removed by an edit keeps their
+// past games (partners' scores stand) but leaves the table and new games
+const activeIdx = () => T.players.map((_, p) => p).filter(p => !(T.left || []).includes(p));
 
 function gamesEach() {
   const gp = new Array(T.players.length).fill(0);
   T.rounds.forEach(g => [...g[0], ...g[1]].forEach(p => gp[p]++));
   return gp;
 }
+const fewestGames = () => { const gp = gamesEach(); return Math.min(...activeIdx().map(p => gp[p])); };
 
-// Another full round: the same format built afresh and added to the end, so
-// everyone's game count goes up by the same amount and best-N stays fair
 // which time slot each game is in; older saves have one game per slot
 const slotsOf = () => T.slot || T.rounds.map((_, i) => i);
 
-function addRound() {
-  // a time-limited tournament adds another time-limited block, steering
-  // away from partnerships already played
-  const built = T.limitGames
-    ? buildLimited(T.players.length, T.genders || null, T.format === "same", T.courts || 1, T.limitGames, T.rounds.flat())
-    : buildSchedule(T.players.length, T.star ?? null, T.genders || null, T.format === "same", T.courts || 1);
-  if (!built) return false;
-  const slot = slotsOf();
-  T.slot = slot.concat(built.slot.map(x => x + (slot.length ? slot[slot.length - 1] + 1 : 0)));
-  T.starts = [...(T.starts || [0]), T.rounds.length];
-  T.rounds = T.rounds.concat(built.rounds);
-  if (built.extras) T.extras = [...new Set([...(T.extras || []), ...built.extras])];
-  T.countBest = Math.min(...gamesEach());
+// The builders work on players 0..m-1. These map the active players in and
+// the games back out, with past partnerships for steering.
+function localSpace() {
+  const active = activeIdx(), loc = {};
+  active.forEach((p, i) => { loc[p] = i; });
+  const past = T.rounds.flat().filter(([a, b]) => a in loc && b in loc).map(([a, b]) => [loc[a], loc[b]]);
+  // games each and slots since last on court, counted from whole games so a
+  // partner who has since left still counts
+  const count = new Array(active.length).fill(0), run = new Array(active.length).fill(0), slot = slotsOf();
+  T.rounds.forEach(g => [...g[0], ...g[1]].forEach(p => { if (p in loc) count[loc[p]]++; }));
+  const last = slot.length ? slot[slot.length - 1] : -1;
+  for (let sl = last; sl >= 0; sl--) {
+    const on = new Set(T.rounds.filter((_, j) => slot[j] === sl).flatMap(g => [...g[0], ...g[1]]));
+    active.forEach((p, i) => { if (run[i] === last - sl && !on.has(p)) run[i]++; });
+  }
+  return { active, loc, past, start: { count, run }, m: active.length, gl: T.genders ? active.map(p => T.genders[p]) : null,
+           courts: Math.max(1, Math.min(T.courts || 1, Math.floor(active.length / 4))),
+           back: rounds => rounds.map(g => g.map(pr => pr.map(i => active[i]))) };
+}
+function appendGames(built, back) {
+  const slot = slotsOf(), next = slot.length ? slot[slot.length - 1] + 1 : 0;
+  T.slot = slot.concat(built.slot.map(x => x + next));
+  T.rounds = T.rounds.concat(back(built.rounds));
+  T.countBest = fewestGames();
   T.final = null;
+}
+
+// Another full round: the same format built afresh and added to the end, so
+// everyone's game count goes up by the same amount. A time-limited
+// tournament adds another time-limited block, away from partners already used.
+function addRound() {
+  const L = localSpace();
+  const built = T.limitGames
+    ? buildLimited(L.m, L.gl, T.format === "same", L.courts, T.limitGames, L.past)
+    : buildSchedule(L.m, T.star in L.loc ? L.loc[T.star] : null, L.gl, T.format === "same", L.courts);
+  if (!built) return false;
+  T.starts = [...(T.starts || [0]), T.rounds.length];
+  if (built.extras) T.extras = [...new Set([...(T.extras || []), ...built.extras.map(i => L.active[i])])];
+  appendGames(built, L.back);
+  return true;
+}
+
+// One more game on each court, for spare time at the end: whoever has
+// played least goes on, with partners they haven't had where possible
+function addGame() {
+  const L = localSpace();
+  const built = buildLimited(L.m, L.gl, T.format === "same", L.courts, L.courts, L.past, L.start);
+  if (!built.rounds.length) return false;
+  appendGames(built, L.back);
   return true;
 }
 
@@ -525,11 +577,11 @@ function renderSetup() {
   const bad = !!setupIssue();
 
   let h = `<div class="top"><div>
-      <div class="eyebrow">Padel &middot; first to ${points}</div>
+      <div class="eyebrow">${editing ? "Editing the tournament" : `Padel &middot; first to ${points}`}</div>
       <h1>Everyone<br>plays everyone</h1></div>
       <div class="topbtns">
         <button class="fmt" data-act="opts" data-v="format">${showOpts === "format" ? "Done" : `Format &middot; <b>${FORMATS[format].short}</b>`}</button>
-        <button class="fmt" data-act="opts" data-v="time">${showOpts === "time" ? "Done" : `Time limit &middot; <b>${LIMIT_SHORT[limit]}</b>`}</button>
+        <button class="fmt" data-act="opts" data-v="time">${showOpts === "time" ? "Done" : `Court time &middot; <b>${LIMIT_SHORT[limit]}</b>`}</button>
       </div></div>`;
 
   if (showOpts === "format") {
@@ -541,17 +593,21 @@ function renderSetup() {
   if (showOpts === "time") {
     h += `<div class="opts"><div class="tgrid">`;
     for (const m of LIMITS) h += `<button class="opt" data-on="${limit === m ? 1 : 0}" data-act="limit" data-v="${m}">${LIMIT_NAME[m]}</button>`;
-    h += `</div><div class="hint" style="margin-top:4px">If everyone-with-everyone won't fit, everyone gets the same number of games instead. Allows about ${Math.round(minsPerGame(points))} min a game at first to ${points}.</div></div>`;
+    h += `</div><div class="hint" style="margin-top:4px">How long you've got the court. If everyone-with-everyone won't fit, everyone gets the same, smaller number of games instead. Allows about ${Math.round(minsPerGame(points))} min a game at first to ${points}.</div></div>`;
   }
 
-  if (T) h += `<button class="resume" data-act="resume">&larr; Back to the tournament in progress</button>`;
+  if (editing) h += `<button class="resume" data-act="cancel">&larr; Back without changing anything</button>`;
+  else if (T) h += `<button class="resume" data-act="resume">&larr; Back to the tournament in progress</button>`;
 
   h += `<div class="setrow"><span class="eyebrow">Courts</span>`;
   for (let c = 1; c <= 4; c++) h += `<button class="tab" data-on="${courts === c ? 1 : 0}" data-act="courts" data-v="${c}">${c}</button>`;
   h += `</div><div class="setrow"><span class="eyebrow">Points to win a match</span>
       <button class="tab" data-act="pts" data-v="${points - 1}">&minus;</button>
       <span class="pval">${points}</span>
-      <button class="tab" data-act="pts" data-v="${points + 1}">+</button></div>`;
+      <button class="tab" data-act="pts" data-v="${points + 1}">+</button></div>
+    <div class="setrow"><span class="eyebrow">Rank the table by</span>
+      <button class="tab wide" data-on="${ranking === "avg" ? 1 : 0}" data-act="rank" data-v="avg">Average</button>
+      <button class="tab wide" data-on="${ranking === "best" ? 1 : 0}" data-act="rank" data-v="best">Best games</button></div>`;
 
   h += `<div class="eyebrow" style="margin-bottom:9px">Who's playing</div>`;
 
@@ -571,7 +627,7 @@ function renderSetup() {
   h += `<div class="hint">&#9733; marks who gets the extra game when the numbers don't divide evenly. They're joined by one other player, picked at random each time you build a schedule.</div>`;
 
   h += `<div class="summary" id="sum">${summaryHTML()}</div>`;
-  h += `<button class="go" id="go" data-act="create" ${bad ? "disabled" : ""}>Build the schedule</button>`;
+  h += `<button class="go" id="go" data-act="create" ${bad ? "disabled" : ""}>${editing ? "Save changes" : "Build the schedule"}</button>`;
   app.innerHTML = h;
 }
 
@@ -583,6 +639,7 @@ function summaryHTML() {
   const starRaw = names[priority] ? names[priority].trim() : "";
   const issue = setupIssue();
   if (issue) return issue;
+  if (midEdit()) return editSummaryHTML(n);
   if (needsCut(n)) return limitedSummaryHTML(n);
   if (format !== "any") return mixedSummaryHTML(clean, starRaw, format === "same");
   let h = `<b>${n}</b> players &middot; <b>${gamesN}</b> games &middot; ${timeHTML(n, gamesN)}<br>`;
@@ -590,7 +647,7 @@ function summaryHTML() {
   if (pairs % 2 === 1) {
     h += `<br><span class="ball">${pairs} pairings is an odd number, so one pair plays together twice. `
        + `${starRaw ? esc(starRaw) : "The starred player"} and one other play ${n} games; everyone else plays ${n - 1}. `
-       + `Only each player's best ${n - 1} scores count.</span>`;
+       + `${fairText(n - 1)}</span>`;
   } else {
     h += `<br>everyone plays <b>${n - 1}</b> games &mdash; no extras needed`;
   }
@@ -626,7 +683,7 @@ function mixedSummaryHTML(clean, starRaw, sameSex) {
   }
   if (boyGames === girlGames) h += `<br>everyone plays <b>${boyGames}</b> games${odd.length ? " before extras" : ""}`;
   else h += `<br>boys play <b>${boyGames}</b> games, girls play <b>${girlGames}</b>`;
-  if (odd.length || boyGames !== girlGames) h += ` &mdash; only each player's best ${Math.min(boyGames, girlGames)} scores count`;
+  if (odd.length || boyGames !== girlGames) h += ` &mdash; ${fairText(Math.min(boyGames, girlGames)).toLowerCase().replace(/\.$/, "")}`;
   h += fitHTML(n) + benchHTML(n);
   return h;
 }
@@ -670,13 +727,33 @@ function fitPoints(n) {
   return p >= 5 && p < points ? p : null;
 }
 
+// how the summary explains uneven game counts, by ranking
+const fairText = k => ranking === "avg"
+  ? "The table ranks on average points per game, so that's fair."
+  : `Only each player's best ${k} scores count.`;
+
+// editing after games have been scored: say what stays and what's rebuilt
+const midEdit = () => editing && T && Object.keys(T.results).length > 0;
+function editSummaryHTML(n) {
+  const ch = editChanges(), kept = Object.keys(T.results).length, todo = T.rounds.length - kept;
+  let h = `<b>${n}</b> players &middot; the <b>${kept}</b> games already scored stay as they are<br>`;
+  if (ch.structural) h += `the ${todo} games not played yet are rebuilt for the new line-up and settings`
+    + (limit ? `, to fit what's left of ${LIMIT_NAME[limit]}` : `, so everyone partners as many new people as possible`);
+  else if (ch.courtsChanged) h += `the ${todo} games not played yet move onto ${useCourts(n) === 1 ? "one court" : useCourts(n) + " courts"}`;
+  else h += `no games need changing`;
+  if (points !== target()) h += `<br>new games are first to <b>${points}</b>; scores already in stay as they are`;
+  if (ch.removed) h += `<br>${ch.removed === 1 ? "the player you removed leaves" : ch.removed + " players you removed leave"} the table; their partners keep those scores`;
+  h += `<br>the table ranks on ${ranking === "avg" ? "average points per game" : "each player's best games"}`;
+  return h;
+}
+
 const fitHTML = n => limit ? `<br>fits in your ${LIMIT_NAME[limit]}` : "";
 
 function limitedSummaryHTML(n) {
   const lp = limitedPlan(n), c = useCourts(n);
   const even = format === "any" && lp.G * 4 === n * lp.k;
   let h = `<b>${n}</b> players &middot; <b>${lp.G}</b> games &middot; fits in <b>${LIMIT_NAME[limit]}</b> on ${c === 1 ? "one court" : c + " courts"}<br>`;
-  h += even ? `everyone plays <b>${lp.k}</b> games` : `everyone plays about <b>${lp.k}</b> games, as even as the numbers allow &mdash; the table counts everyone's best scores so it stays fair`;
+  h += even ? `everyone plays <b>${lp.k}</b> games` : `everyone plays about <b>${lp.k}</b> games, as even as the numbers allow &mdash; ${fairText(lp.k - 1).toLowerCase()}`;
   h += `<br>partners change every game, but not every pair gets to play together`;
   h += `<br><span class="ball">Everyone with everyone would take about ${dur(Math.round(fullMins(n)))} at first to ${points}.</span>`;
   const fp = fitPoints(n);
@@ -706,7 +783,7 @@ function renderPlay() {
   const liveSlot = nextUp >= 0 ? slot[nextUp] : -1;
 
   let h = `<div class="top"><div>
-      <div class="eyebrow">${T.players.length} players${T.format && T.format !== "any" ? " &middot; " + FORMATS[T.format].short.toLowerCase() : ""} &middot; first to ${target()}${T.limitGames ? " &middot; time-limited" : ""}</div>
+      <div class="eyebrow">${activeIdx().length} players${T.format && T.format !== "any" ? " &middot; " + FORMATS[T.format].short.toLowerCase() : ""} &middot; first to ${target()}${T.limitGames ? " &middot; time-limited" : ""}</div>
       <h1>Everyone<br>plays everyone</h1></div>
       <div class="prog"><b>${played}</b>/${total}<br>games</div></div>`;
 
@@ -750,7 +827,7 @@ function renderPlay() {
       const mates = T.rounds.filter((_, j) => slot[j] === slot[idx]);
       const on = new Set(mates.flatMap(m => [...m[0], ...m[1]]));
       const lastInSlot = slot[idx + 1] !== slot[idx];
-      const bench = lastInSlot ? T.players.map((_, i) => i).filter(i => !on.has(i)) : [];
+      const bench = lastInSlot ? activeIdx().filter(i => !on.has(i)) : [];
       const court = idx - slot.indexOf(slot[idx]) + 1;
       const label = multi ? `Game ${slot[idx] + 1} &middot; court ${court}` : `Game ${idx + 1}`;
 
@@ -786,25 +863,34 @@ function renderPlay() {
         <div class="hint">Optional, just for fun &mdash; it doesn't change the table.</div>`;
     }
 
-    const again = starts.length > 1 ? starts[1] : total;
-    h +=`<button class="more" data-act="again" data-armed="${armed === "again" ? 1 : 0}">${armed === "again"
+    const again = T.limitGames || (starts.length > 1 ? starts[1] : total), multiC = (T.courts || 1) > 1;
+    h += `<button class="more" data-act="one" data-armed="${armed === "one" ? 1 : 0}">${armed === "one"
+      ? "Tap again to add" : multiC ? "+ Add a game on each court" : "+ Add a game"}</button>
+      <button class="more" style="margin-top:7px" data-act="again" data-armed="${armed === "again" ? 1 : 0}">${armed === "again"
       ? `Tap again to add ${again} games` : "+ Add another round"}</button>
-      <div class="hint">Everyone plays everyone again, so the totals stay fair.${F ? " Adding one clears the final." : ""}</div>`;
+      <div class="hint">Spare time at the end? Add a game: whoever has played least goes on, with new partners where possible.
+        Or add a whole round, everyone again.${F ? " Either clears the final." : ""}</div>`;
   } else {
     if (played === 0) {
       h += `<div class="empty">No scores yet.<br>Play game 1, then tap the pair that won.</div>`;
     } else {
-      standings().forEach((r, i) => {
+      const rows = standings(), avg = T.ranking === "avg";
+      const level = rows.every(r => r.played === rows[0].played);
+      rows.forEach((r, i) => {
         let sub = `${r.played} played &middot; ${r.wins} won`;
         if (r.dropped.length) sub += ` &middot; <span class="drop">dropped ${r.dropped.join(", ")}</span>`;
+        if (avg && !level) sub += ` &middot; ${r.total} points`;
         h += `<div class="row" data-lead="${i === 0 ? 1 : 0}">
             <span class="rank">${i + 1}</span>
             <div class="who"><div class="nm">${esc(r.name)}</div><div class="sub">${sub}</div></div>
-            <span class="avg">${r.total}</span></div>`;
+            <span class="avg">${avg && !level ? r.avg.toFixed(1) : r.total}</span></div>`;
       });
       const gp = gamesEach();
-      const more = T.players.filter((_, p) => gp[p] > T.countBest).map(esc);
-      if (more.length === 2 && Math.max(...gp) === T.countBest + 1) {
+      const more = activeIdx().filter(p => gp[p] > T.countBest).map(p => esc(T.players[p]));
+      if (avg) {
+        h += `<div class="note">${level ? `Everyone has played ${rows[0].played}, so these are straight totals.`
+          : "Ranked on average points per game, because not everyone has played the same number yet."}</div>`;
+      } else if (more.length === 2 && Math.max(...gp) === T.countBest + 1) {
         h += `<div class="note">Totals are each player's best ${T.countBest} games.
           ${more[0]} and ${more[1]} play one game more,
           so once they've played ${T.countBest + 1} their lowest score drops out.</div>`;
@@ -819,12 +905,122 @@ function renderPlay() {
 
   h += `<div class="foot">
       <button data-act="clear" data-armed="${armed === "clear" ? 1 : 0}">${armed === "clear" ? "Tap again" : "Clear scores"}</button>
+      <button data-act="editT">Edit</button>
       <button data-act="setup">New tournament</button>
     </div>`;
   app.innerHTML = h;
 }
 
 const render = () => view === "setup" ? renderSetup() : renderPlay();
+
+/* ============ building and editing ============ */
+// a fresh tournament from the setup screen
+function createTournament() {
+  const clean = cleanNames();
+  // priority index within the cleaned list
+  const starRaw = names[priority] ? names[priority].trim() : "";
+  const pIdx = starRaw ? clean.indexOf(starRaw) : -1;
+  const lp = needsCut(clean.length) ? limitedPlan(clean.length) : null;
+  const built = lp
+    ? buildLimited(clean.length, format === "any" ? null : cleanGenders(), format === "same", useCourts(clean.length), lp.G)
+    : buildSchedule(clean.length, pIdx >= 0 ? pIdx : null,
+        format === "any" ? null : cleanGenders(), format === "same", useCourts(clean.length));
+  if (!built) { alert("Couldn't build a schedule for that many players. Try adding or removing one."); return false; }
+  const gp = new Array(clean.length).fill(0);
+  built.rounds.forEach(g => [...g[0], ...g[1]].forEach(p => gp[p]++));
+  T = { players: clean, rounds: built.rounds, extras: built.extras, results: {}, countBest: Math.min(...gp), format,
+        genders: format === "any" ? null : cleanGenders(), star: pIdx >= 0 ? pIdx : null, starts: [0], final: null,
+        courts: useCourts(clean.length), slot: built.slot, target: points, limitGames: lp ? lp.G : null,
+        limit, ranking };
+  saveT(); saveN();
+  return true;
+}
+
+// Open the setup screen filled in from the tournament. What was on the
+// setup screen before is kept to put back if you leave without saving.
+function startEdit() {
+  syncInputs();
+  editSnap = { names, genders, priority, format, courts, points, limit, ranking };
+  const act = activeIdx();
+  names = act.map(p => T.players[p]);
+  genders = act.map(p => (T.genders && T.genders[p]) || "");
+  editFrom = [...act];
+  priority = Math.max(0, act.indexOf(T.star));
+  format = T.format || "any"; courts = T.courts || 1; points = target();
+  limit = T.limit || 0; ranking = T.ranking || "best";
+  editing = true; view = "setup"; showOpts = null; armed = null;
+}
+function endEdit() {
+  if (editSnap) ({ names, genders, priority, format, courts, points, limit, ranking } = editSnap);
+  editSnap = null; editing = false; view = "play";
+  saveN();
+}
+
+const editRows = () => names.map((nm, i) => ({ name: nm.trim(), from: editFrom[i], g: genders[i] || "" })).filter(r => r.name);
+// what an edit changes: new or removed players, boy/girl or format, or the
+// court time (or points, which change how many games fit in it) mean the
+// unplayed games are rebuilt; courts alone just re-pack them
+function editChanges() {
+  const rows = editRows(), kept = rows.filter(r => r.from >= 0).map(r => r.from);
+  const removed = activeIdx().filter(p => !kept.includes(p)).length, added = rows.filter(r => r.from < 0).length;
+  const gChanged = format !== (T.format || "any")
+    || (format !== "any" && rows.some(r => r.from >= 0 && (!T.genders || T.genders[r.from] !== r.g)));
+  const structural = !!(removed || added || gChanged || limit !== (T.limit || 0) || (limit && points !== target()));
+  return { rows, removed, added, structural, courtsChanged: useCourts(rows.length) !== (T.courts || 1) };
+}
+
+// Save an edit to a tournament with scores in. Every scored game stays,
+// with its result; the unplayed ones are rebuilt or re-packed as needed.
+function saveEdit() {
+  const ch = editChanges(), rows = ch.rows;
+  const removed = activeIdx().filter(p => !rows.some(r => r.from === p));
+  rows.forEach(r => { if (r.from >= 0) T.players[r.from] = r.name; else { r.from = T.players.length; T.players.push(r.name); } });
+  T.left = [...new Set([...(T.left || []), ...removed])];
+  if (format === "any") T.genders = null;
+  else {
+    T.genders = T.players.map((_, p) => (T.genders && T.genders[p]) || "");
+    rows.forEach(r => { T.genders[r.from] = r.g; });
+  }
+  T.format = format; T.target = points; T.ranking = ranking; T.limit = limit;
+  T.courts = useCourts(rows.length);
+  if (ch.structural || ch.courtsChanged) rebuildUnplayed(ch.structural);
+  T.countBest = fewestGames();
+  saveT();
+  editSnap = null;
+  return true;
+}
+
+function rebuildUnplayed(regenerate) {
+  const slot = slotsOf();
+  const keep = T.rounds.map((_, i) => i).filter(i => T.results[i]);
+  const unplayed = T.rounds.filter((_, i) => !T.results[i]);
+  // scored games keep their order and grouping, renumbered from slot 0
+  const slotMap = {}; let ns = 0;
+  const keptSlots = keep.map(i => slotMap[slot[i]] ?? (slotMap[slot[i]] = ns++));
+  const results = {};
+  keep.forEach((i, k) => { results[k] = T.results[i]; });
+  T.rounds = keep.map(i => T.rounds[i]); T.slot = keptSlots; T.results = results;
+  T.starts = [0]; T.final = null; T.extras = null;
+
+  if (!regenerate) {
+    // same games, packed onto the new number of courts
+    let best = null, bs = Infinity;
+    for (let t = 0; t < 100; t++) {
+      const o = slotOnce(unplayed, T.players.length, T.courts), sc = benchScore(o, T.players.length);
+      if (sc < bs) { bs = sc; best = o; }
+    }
+    appendGames({ rounds: best.flat(), slot: best.flatMap((sl, i) => sl.map(() => i)) }, r => r);
+    return;
+  }
+  // enough games for every partnership not played yet, or what's left of the court time
+  const L = localSpace();
+  const done = new Set(L.past.map(([a, b]) => Math.min(a, b) + "-" + Math.max(a, b)));
+  const fresh = pairGroups(L.m, L.gl, T.format === "same").flat().filter(([a, b]) => !done.has(a + "-" + b)).length;
+  let G = Math.ceil(fresh / 2);
+  if (T.limit) G = Math.min(G, Math.max(0, Math.floor(T.limit / minsPerGame(T.target)) - ns) * L.courts);
+  T.limitGames = T.limit ? G || T.limitGames : null;
+  if (G) appendGames(buildLimited(L.m, L.gl, T.format === "same", L.courts, G, L.past, L.start), L.back);
+}
 
 /* ============ events ============ */
 app.addEventListener("input", e => {
@@ -839,7 +1035,7 @@ app.addEventListener("keydown", e => {
   const i = +e.target.dataset.i;
   const next = app.querySelector(`.pin[data-i="${i + 1}"]`);
   if (next) next.focus();
-  else { syncInputs(); names.push(""); genders.push(""); saveN(); render(); app.querySelector(`.pin[data-i="${names.length - 1}"]`).focus(); }
+  else { syncInputs(); names.push(""); genders.push(""); if (editing) editFrom.push(-1); saveN(); render(); app.querySelector(`.pin[data-i="${names.length - 1}"]`).focus(); }
 });
 
 app.addEventListener("click", e => {
@@ -853,35 +1049,35 @@ app.addEventListener("click", e => {
   else if (act === "pts") { syncInputs(); points = Math.max(3, Math.min(21, +v)); saveN(); render(); }
   else if (act === "courts") { syncInputs(); courts = +v; saveN(); render(); }
   else if (act === "sex") { syncInputs(); genders[i] = genders[i] === "m" ? "f" : "m"; saveN(); render(); }
-  else if (act === "add") { syncInputs(); names.push(""); genders.push(""); saveN(); render(); app.querySelector(`.pin[data-i="${names.length - 1}"]`).focus(); }
+  else if (act === "rank") { syncInputs(); ranking = v; render(); }
+  else if (act === "add") { syncInputs(); names.push(""); genders.push(""); if (editing) editFrom.push(-1); saveN(); render(); app.querySelector(`.pin[data-i="${names.length - 1}"]`).focus(); }
   else if (act === "del") {
     syncInputs();
     if (names.length <= 1) return;
-    names.splice(i, 1); genders.splice(i, 1);
+    names.splice(i, 1); genders.splice(i, 1); if (editing) editFrom.splice(i, 1);
     if (priority === i) priority = 0; else if (priority > i) priority--;
     saveN(); render();
   }
   else if (act === "create") {
     syncInputs();
-    const clean = cleanNames();
     if (setupIssue()) return;
-    // priority index within the cleaned list
-    const starRaw = names[priority] ? names[priority].trim() : "";
-    const pIdx = starRaw ? clean.indexOf(starRaw) : -1;
-    const lp = needsCut(clean.length) ? limitedPlan(clean.length) : null;
-    const built = lp
-      ? buildLimited(clean.length, format === "any" ? null : cleanGenders(), format === "same", useCourts(clean.length), lp.G)
-      : buildSchedule(clean.length, pIdx >= 0 ? pIdx : null,
-          format === "any" ? null : cleanGenders(), format === "same", useCourts(clean.length));
-    if (!built) { alert("Couldn't build a schedule for that many players. Try adding or removing one."); return; }
-    const gp = new Array(clean.length).fill(0);
-    built.rounds.forEach(g => [...g[0], ...g[1]].forEach(p => gp[p]++));
-    T = { players: clean, rounds: built.rounds, extras: built.extras, results: {}, countBest: Math.min(...gp), format,
-          genders: format === "any" ? null : cleanGenders(), star: pIdx >= 0 ? pIdx : null, starts: [0], final: null,
-          courts: useCourts(clean.length), slot: built.slot, target: points, limitGames: lp ? lp.G : null };
-    saveT(); saveN();
+    if (!(midEdit() ? saveEdit() : createTournament())) return;
+    editing = false; editSnap = null;
     view = "play"; tab = "rounds"; open = null; winner = null; armed = null;
     render(); window.scrollTo(0, 0);
+  }
+  else if (act === "editT") { startEdit(); render(); window.scrollTo(0, 0); }
+  else if (act === "cancel") { endEdit(); render(); window.scrollTo(0, 0); }
+  else if (act === "one") {
+    clearTimeout(armTimer);
+    if (armed === "one") {
+      armed = null;
+      if (!addGame()) { alert("Couldn't fit another game in. Try again."); return; }
+      if (open === "final") { open = null; winner = null; }
+      saveT();
+    }
+    else { armed = "one"; armTimer = setTimeout(() => { armed = null; render(); }, 3000); }
+    render();
   }
   else if (act === "resume") { view = "play"; render(); window.scrollTo(0, 0); }
   else if (act === "setup") { syncInputs(); view = "setup"; armed = null; render(); window.scrollTo(0, 0); }

@@ -18,7 +18,7 @@ test.js       node test harness — runs the real code out of index.html
 
 State lives in two `localStorage` keys, both per-device:
 
-- `padel-tournament-v2` — the live tournament `{players, rounds, extras, results, countBest, format, genders, star, starts, final, courts, slot, target, limitGames}` (everything after `countBest` is optional, so older saves still load)
+- `padel-tournament-v2` — the live tournament `{players, rounds, extras, results, countBest, format, genders, star, starts, final, courts, slot, target, limitGames, limit, ranking, left}` (everything after `countBest` is optional, so older saves still load)
 - `padel-names-v2` — the last player list, starred index and genders, so setup is prefilled next time
 
 There is no sync. One person scores. If the shape of the stored object ever
@@ -81,7 +81,7 @@ case hits the minimum number of slots; `test.js` prints used/minimum.
 `T.target`): scoring chips, the winners' default and the eyebrow all follow
 it. Minutes per game scale with it (`minsPerGame`, 12 min at first to 9).
 
-**Time limit** (`limit`, the Time limit button beside Format; not saved, so
+**Court time** (`limit`, the Court time button beside Format; not saved, so
 every visit starts with none). `needsCut(n)` compares `fullMins(n)` — the
 full schedule's slots × minutes per game — with the limit. If it won't fit,
 `limitedPlan(n)` picks the most games each `k` with `n·k/4` a whole number of
@@ -104,11 +104,35 @@ for fun, stored in `T.final` and never counted in the table. Anyone: 1st + 4th
 v 2nd + 3rd. Mixed formats: top boy + 2nd girl v 2nd boy + top girl. Adding a
 round or clearing scores removes it.
 
-**2. Ranking is best-N totals, not averages.** `countBest` is the number of
-games *most* players get (`min` of games played). Every player is ranked on the
-sum of their best `countBest` scores. The two with an extra game simply have
-their lowest score dropped, which is shown in their row. Freddie asked for this
-specifically — **do not reintroduce averages.** Ties break on games won.
+**2. Ranking is chosen per tournament (`T.ranking`), average by default.**
+Freddie asked for this (Oct 2026): a small "Rank the table by" switch on
+setup, **Average** selected unless changed, never a forced choice.
+- `avg` — average points per game. The table shows plain totals while
+  everyone has played the same number, and averages (one decimal) once
+  they differ. Added games and edits make counts uneven, which is why it's
+  the default.
+- `best` — the original rule: everyone ranked on the sum of their best
+  `countBest` games (`min` of games played among active players); anyone
+  with more has their lowest scores dropped, shown in their row.
+Saves from before this have no `ranking` and stay on `best`. Ties break on
+games won.
+
+**Add a game** (`addGame()`): one game per court for spare time at the end.
+`localSpace()` maps active players to 0..m−1 with their games so far
+(counted from whole games, so a partner who has left still counts) and
+slots since last on court; `buildLimited(..., start)` carries on from there.
+
+**Editing** (`Edit` on the tournament screen → `startEdit()`): the setup
+screen opens filled from the tournament, `editFrom[i]` tying each row to a
+player index (−1 = new). With no scores yet, saving just builds afresh.
+Otherwise `saveEdit()` keeps every scored game and its result, renames in
+place, appends new players, and marks removed ones in `T.left` (their past
+games stand, they leave the table and new games). New/removed players,
+boy/girl or format, court time, or points under a court time →
+`rebuildUnplayed(true)` rebuilds the unplayed games with `buildLimited`
+(enough for the unplayed partnerships, or what's left of the court time);
+courts alone → the same unplayed games re-packed. "Back without changing
+anything" restores the setup screen from `editSnap`.
 
 ## Testing
 
@@ -136,7 +160,7 @@ menu → Install app.
 Live at https://freddie209.github.io/padel/ (GitHub Pages, `master`, root).
 Push to `master` to deploy.
 
-**After changing `index.html`, bump `CACHE` in `sw.js`** (`padel-v4` → `v5`…).
+**After changing `index.html`, bump `CACHE` in `sw.js`** (`padel-v5` → `v6`…).
 The service worker is cache-first, so without a bump an installed copy keeps
 serving the old version. With a bump, the new worker installs in the
 background on the next open and the page reloads itself once

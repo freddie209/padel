@@ -348,5 +348,100 @@ for (const format of ["mixed", "same"]) {
   console.log(`  ${format.padEnd(6)}  ${fin.a.map(p => POOL[p]).join(" & ")} v ${fin.b.map(p => POOL[p]).join(" & ")}`);
 }
 
+/* ---------- 5. average ranking ---------- */
+console.log("\nAverage ranking");
+
+// A plays 2 (9 + 9), B plays 3 (9 + 9 + 0): totals favour B, averages A
+setT({ players: ["A", "B", "C", "D", "E"], ranking: "avg", countBest: 2, extras: null, results: {},
+       rounds: [[[0, 1], [2, 3]], [[0, 1], [2, 4]], [[1, 2], [3, 4]]] });
+setResults({ 0: { a: 9, b: 3 }, 1: { a: 9, b: 5 }, 2: { a: 0, b: 9 } });
+const avgT = table();
+const rowOf = nm => avgT.find(r => r.name === nm);
+check(rowOf("A").avg === 9 && rowOf("B").avg === 6, `A averages 9 and B 6, got ${rowOf("A").avg} and ${rowOf("B").avg}`);
+check(avgT.indexOf(rowOf("A")) < avgT.indexOf(rowOf("B")), "A ranks above B on average despite a lower total");
+check(avgT.every(r => r.dropped.length === 0), "average ranking never drops scores");
+console.log(`  ${avgT.map(r => `${r.name} ${r.avg.toFixed(1)}`).join("  ")}`);
+
+/* ---------- 6. add a game: least-played first ---------- */
+console.log("\nAdd a game");
+
+const run = code => vm.runInContext(code, ctx);
+setT({ players: POOL.slice(0, 6), ranking: "avg", countBest: 1, extras: null, results: {}, courts: 1, starts: [0],
+       rounds: [[[0, 1], [2, 3]], [[0, 2], [1, 4]]], slot: [0, 1] });
+// 5 (Georgie) hasn't played, 3 (Barnaby) and 4 (Antonio) once
+check(run("addGame()") === true, "addGame worked");
+let tg = T_of(), newG = tg.rounds[2];
+check(tg.rounds.length === 3 && tg.slot[2] === 2, "one new game in a new slot");
+check([...newG[0], ...newG[1]].includes(5), "the player who hasn't played gets on");
+check(!JSON.stringify(newG).includes("[0,1]") && !JSON.stringify(newG).includes("[0,2]"), "no partnership repeated when avoidable");
+console.log(`  added ${newG.map(p => p.map(i => POOL[i]).join(" & ")).join(" v ")}`);
+
+setT({ ...tg, courts: 2, players: POOL.slice(0, 9) });
+check(run("addGame()") === true && T_of().rounds.length === 5, "two courts adds two games at once");
+
+/* ---------- 7. editing a tournament in progress ---------- */
+console.log("\nEditing");
+
+const startEditOn = t => { setT(t); run("names = []; startEdit()"); };
+const base8 = () => {
+  const b = ctx.buildSchedule(8, 0, null, false, 1);
+  return { players: POOL.slice(0, 8), rounds: b.rounds, slot: b.slot, extras: b.extras, results: { 0: { a: 9, b: 4 }, 1: { a: 6, b: 9 } },
+           countBest: 7, format: "any", genders: null, star: 0, starts: [0], final: null, courts: 1, target: 9, limit: 0, ranking: "avg" };
+};
+
+// rename only: nothing rebuilt
+let t0 = base8(); startEditOn(t0);
+run("names[1] = 'Alexander'; saveEdit(); editing = false;");
+let t1 = T_of();
+check(t1.players[1] === "Alexander", "rename sticks");
+check(JSON.stringify(t1.rounds) === JSON.stringify(t0.rounds), "a rename leaves every game alone");
+check(t1.results[0].a === 9 && t1.results[1].b === 9, "scores kept");
+
+// points change without a time limit: games stay, target changes
+startEditOn(t0); run("points = 11; saveEdit(); editing = false;");
+t1 = T_of();
+check(t1.target === 11 && JSON.stringify(t1.rounds) === JSON.stringify(t0.rounds), "points change keeps the games");
+
+// remove one player and add one: scored games kept, the rest rebuilt without the leaver
+startEditOn(t0);
+run("names.splice(3, 1); genders.splice(3, 1); editFrom.splice(3, 1); names.push('Zed'); genders.push(''); editFrom.push(-1); saveEdit(); editing = false;");
+t1 = T_of();
+const scored = [t0.rounds[0], t0.rounds[1]];
+check(JSON.stringify(t1.rounds.slice(0, 2)) === JSON.stringify(scored), "the two scored games are first and unchanged");
+check(t1.results[0].a === 9 && t1.results[1].a === 6, "their results moved with them");
+check(t1.left.includes(3), "the removed player is marked as left");
+const later = t1.rounds.slice(2).flatMap(g => [...g[0], ...g[1]]);
+check(!later.includes(3), "the removed player isn't in any new game");
+check(later.includes(8) && t1.players[8] === "Zed", "the new player is in the new games");
+const tbl7 = vm.runInContext("JSON.parse(JSON.stringify(standings()))", ctx);
+check(tbl7.length === 8 && !tbl7.some(r => r.p === 3), "the table has the 8 still playing, not the leaver");
+const gp7 = new Array(9).fill(0); t1.rounds.forEach(g => [...g[0], ...g[1]].forEach(p => gp7[p]++));
+const act7 = [0, 1, 2, 4, 5, 6, 7, 8].map(p => gp7[p]);
+check(Math.max(...act7) - Math.min(...act7) <= 2, `games each stay close after the edit, got ${act7.join(",")}`);
+console.log(`  ${t1.rounds.length} games after swapping Barnaby for Zed; games each ${act7.join(",")}`);
+
+// games with someone who has since left still count: Cisco (2) and Milo (5)
+// have 3 games each, two of them with Ned (6), who left, so they sit out
+setT({ players: ["Freddie", "Alexander", "Cisco", "Georgie", "Kit", "Milo", "Ned", "Lily", "Zed"], left: [6],
+       rounds: [[[0, 2], [5, 6]], [[3, 4], [1, 7]], [[0, 7], [2, 6]], [[4, 8], [3, 5]], [[1, 2], [5, 8]]],
+       slot: [0, 1, 2, 3, 4], results: {}, courts: 1, ranking: "avg", countBest: 2 });
+for (let k = 0; k < 5; k++) {
+  setT({ ...T_of(), rounds: T_of().rounds.slice(0, 5), slot: [0, 1, 2, 3, 4] });
+  run("addGame()");
+  const on = T_of().rounds[5].flat().flat();
+  check(!on.includes(2) && !on.includes(5), `added game puts on Cisco or Milo, who have played most: ${JSON.stringify(T_of().rounds[5])}`);
+}
+
+// courts only: same unplayed games, re-packed onto two
+startEditOn(t0); run("courts = 2; saveEdit(); editing = false;");
+t1 = T_of();
+const sortG = r => r.map(g => JSON.stringify(g)).sort().join("|");
+check(sortG(t1.rounds) === sortG(t0.rounds), "changing courts keeps the same games");
+check(t1.courts === 2 && Math.max(...t1.slot) + 1 < t0.rounds.length, "and packs them onto two courts");
+
+// cancelling puts the setup screen back as it was
+setT(t0); run("names = ['x','y']; courts = 3; startEdit(); names = ['changed']; endEdit();");
+check(run("names.join()") === "x,y" && run("courts") === 3 && T_of().players[1] === "Alex", "cancel restores setup and leaves the tournament alone");
+
 console.log(pass ? "\nALL CHECKS PASSED" : "\nFAILURES FOUND");
 process.exit(pass ? 0 : 1);
