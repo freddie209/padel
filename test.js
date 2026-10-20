@@ -158,6 +158,40 @@ for (let m = 2; m <= 8; m++) for (let f = 2; f <= 8; f++) {
 }
 }
 
+/* ---------- 1c. several courts ---------- */
+console.log("\nCourts (slots used / fewest possible)\n");
+
+for (const [courts, n, sx, sameSex] of [
+  [2, 8], [2, 9], [2, 10], [2, 11], [2, 14], [3, 12], [3, 13], [3, 14], [4, 16],
+  [2, 8, ["m", "f", "m", "f", "m", "f", "m", "f"], false],
+  [2, 10, ["m", "f", "m", "f", "m", "f", "m", "f", "m", "f"], true]]) {
+  const tag = `${courts} courts N=${n}${sx ? (sameSex ? " mixed+same" : " mixed") : ""}`;
+  const built = ctx.buildSchedule(n, 0, sx || null, !!sameSex, courts);
+  check(!!built, `${tag} built a schedule`);
+  if (!built) continue;
+  check(built.slot.length === built.rounds.length, `${tag} every game has a slot`);
+  check(built.slot.every((s, i) => i === 0 || s === built.slot[i - 1] || s === built.slot[i - 1] + 1),
+    `${tag} slots run in order`);
+
+  const slots = [];
+  built.rounds.forEach((g, i) => (slots[built.slot[i]] = slots[built.slot[i]] || []).push(g));
+  slots.forEach((sl, k) => {
+    check(sl.length <= courts, `${tag} slot ${k + 1} uses ${sl.length} courts`);
+    const ps = sl.flatMap(g => [...g[0], ...g[1]]);
+    check(new Set(ps).size === ps.length, `${tag} slot ${k + 1} has someone on two courts`);
+  });
+
+  check(slots.every((sl, k) => sl.length === courts || slots.slice(k).every(x => x.length < courts)),
+    `${tag} a part-empty slot comes before a full one`);
+
+  const gp = new Array(n).fill(0);
+  built.rounds.forEach(g => [...g[0], ...g[1]].forEach(p => gp[p]++));
+  const floor = Math.max(Math.ceil(built.rounds.length / courts), ...gp);
+  // a greedy packer won't always hit the floor, but it shouldn't be far off
+  check(slots.length <= floor + Math.ceil(floor / 4), `${tag} ${slots.length} slots is too many (floor ${floor})`);
+  console.log(`  ${tag.padEnd(26)} ${String(built.rounds.length).padStart(2)} games in ${slots.length}/${floor} slots`);
+}
+
 /* ---------- 2. scoring: best-N, worst dropped, no averages ---------- */
 console.log("\nScoring (6 players, Freddie starred)");
 
@@ -211,12 +245,15 @@ check(partial.every(r => r.dropped.length === 0), "nothing should be dropped mid
 console.log("\nAnother round");
 
 const T_of = () => vm.runInContext("JSON.parse(JSON.stringify(T))", ctx);
+// 8 or more players go on two courts, so adding a round is checked there too
 const fresh = (n, sx, format) => {
-  const b = ctx.buildSchedule(n, 0, sx, format === "same");
+  const courts = n >= 8 ? 2 : 1;
+  const b = ctx.buildSchedule(n, 0, sx, format === "same", courts);
   const gp = new Array(n).fill(0);
   b.rounds.forEach(g => [...g[0], ...g[1]].forEach(p => gp[p]++));
   setT({ players: POOL.slice(0, n), rounds: b.rounds, extras: b.extras, results: {}, countBest: Math.min(...gp),
-         format, genders: sx, star: 0, starts: [0], final: { a: [0, 1], b: [2, 3], result: null } });
+         format, genders: sx, star: 0, starts: [0], final: { a: [0, 1], b: [2, 3], result: null },
+         courts, slot: b.slot });
   return b.rounds.length;
 };
 
@@ -231,6 +268,8 @@ for (const [n, sx, format] of [[6, null, "any"], [7, null, "any"],
   check(JSON.stringify(t.starts) === JSON.stringify([0, len]), `${format} N=${n} round 2 starts at game ${len + 1}`);
   check(t.countBest === before * 2, `${format} N=${n} best-N should double ${before} -> ${before * 2}, got ${t.countBest}`);
   check(t.final === null, `${format} N=${n} adding a round clears the final`);
+  check(t.slot.length === t.rounds.length && t.slot[len] === t.slot[len - 1] + 1,
+    `${format} N=${n} round 2 slots carry on from round 1`);
   if (sx) t.rounds.forEach((g, i) =>
     check(kind(g[0], sx) === kind(g[1], sx), `${format} N=${n} game ${i + 1} is ${kind(g[0], sx)} v ${kind(g[1], sx)}`));
   console.log(`  ${format.padEnd(5)} N=${n}  ${len} -> ${t.rounds.length} games  best-${before} -> best-${t.countBest}`);

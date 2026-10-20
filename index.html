@@ -57,6 +57,9 @@ h1{font-size:26px;font-weight:800;letter-spacing:-.035em;line-height:.95;margin:
 .opt[data-on="1"]{background:var(--line);color:var(--deep);}
 .opt .nm{font-size:14px;}
 .opt .sub{color:inherit;opacity:.7;}
+.courts{display:flex;align-items:center;gap:6px;margin-bottom:16px;}
+.courts .eyebrow{flex:1;}
+.courts .tab{flex:none;width:44px;height:38px;padding:0;font-family:'DM Mono',monospace;}
 .sex{width:54px;height:44px;border-radius:9px;background:var(--tile);flex:none;
   font-size:13px;font-weight:600;transition:.16s;}
 .sex[data-g=""]{background:none;color:var(--mute);box-shadow:inset 0 0 0 1px var(--hair);}
@@ -179,33 +182,61 @@ function matchPairs(pairs) {
   return null;
 }
 
-function orderOnce(games, n) {
-  const remaining = [...games], ordered = [], played = new Array(n).fill(0), run = new Array(n).fill(0);
+// Packs games into time slots of up to `courts` games with nobody on two
+// courts at once. Each court takes the game whose players have sat out
+// longest (cost quadratic in the bench run) and played least. On several
+// courts, players with the most games still to play go first — they're what
+// stops the slots packing tight.
+function slotOnce(games, n, courts) {
+  const remaining = [...games], slots = [], played = new Array(n).fill(0), run = new Array(n).fill(0);
+  const left = new Array(n).fill(0);
+  games.forEach(g => [...g[0], ...g[1]].forEach(p => left[p]++));
   while (remaining.length) {
-    let bi = -1, bs = Infinity;
-    remaining.forEach((g, idx) => {
-      const on = new Set([...g[0], ...g[1]]);
-      let s = 0;
-      for (let p = 0; p < n; p++) if (!on.has(p)) s += 40 * (run[p] + 1) * (run[p] + 1);
-      on.forEach(p => s += 4 * played[p]);
-      s += Math.random() * 0.5;
-      if (s < bs) { bs = s; bi = idx; }
-    });
-    const g = remaining.splice(bi, 1)[0];
-    ordered.push(g);
-    const on = new Set([...g[0], ...g[1]]);
+    const slot = [], on = new Set();
+    while (slot.length < courts) {
+      let bi = -1, bs = Infinity;
+      remaining.forEach((g, idx) => {
+        const ps = [...g[0], ...g[1]];
+        if (ps.some(p => on.has(p))) return;
+        let s = Math.random() * 0.5;
+        ps.forEach(p => s += 4 * played[p] - 40 * (run[p] + 1) * (run[p] + 1) - (courts > 1 ? 1000 * left[p] : 0));
+        if (s < bs) { bs = s; bi = idx; }
+      });
+      if (bi < 0) break;
+      const g = remaining.splice(bi, 1)[0];
+      slot.push(g); [...g[0], ...g[1]].forEach(p => { on.add(p); left[p]--; });
+    }
+    slots.push(slot);
     for (let p = 0; p < n; p++) { if (on.has(p)) { played[p]++; run[p] = 0; } else run[p]++; }
   }
-  return ordered;
+  return slots;
 }
 
-function benchScore(rounds, n) {
+// First fit in the order given: with textbook matchings, that keeps each
+// matching's games together in one slot, which the greedy above can miss
+function slotInOrder(games, courts) {
+  const remaining = [...games], slots = [];
+  while (remaining.length) {
+    const slot = [], on = new Set();
+    for (let i = 0; i < remaining.length && slot.length < courts; i++) {
+      const ps = [...remaining[i][0], ...remaining[i][1]];
+      if (ps.some(p => on.has(p))) continue;
+      slot.push(remaining[i]); ps.forEach(p => on.add(p));
+      remaining.splice(i--, 1);
+    }
+    slots.push(slot);
+  }
+  return slots;
+}
+
+// fewest slots first (that's the time it takes), then the bench runs
+function benchScore(slots, n) {
   const run = new Array(n).fill(0); let worst = 0, total = 0;
-  rounds.forEach(g => {
-    const on = new Set([...g[0], ...g[1]]);
+  slots.forEach(sl => {
+    const on = new Set(sl.flatMap(g => [...g[0], ...g[1]]));
     for (let p = 0; p < n; p++) { if (on.has(p)) run[p] = 0; else { run[p]++; worst = Math.max(worst, run[p]); total += run[p]; } }
   });
-  return worst * 1000 + total;
+  return slots.length * 1e6 + worst * 1000 + total;
 }
 
 // Mixed: a game is two pairs of the same kind (boy+girl, boy+boy or girl+girl),
@@ -220,11 +251,50 @@ function pairGroups(n, genders, sameSex) {
   return [g.mm.length >= 6 ? g.mm : [], g.ff.length >= 6 ? g.ff : [], g.mf].filter(ps => ps.length);
 }
 
-function buildSchedule(n, priority, genders, sameSex) {
+// Splits one kind of pairs into matchings (no player twice in one) the
+// textbook way: the circle method when everyone in it pairs with everyone,
+// a rotation when it's boy-girl. Shuffled first so each build differs.
+function factorise(pairs) {
+  const vs = shuffle([...new Set(pairs.flat())]), k = vs.length;
+  const sorted = (a, b) => a < b ? [a, b] : [b, a];
+  const out = [];
+  if (pairs.length === k * (k - 1) / 2) {
+    const ring = k % 2 ? [...vs, -1] : vs, m = ring.length - 1;
+    for (let r = 0; r < m; r++) {
+      const round = [[ring[m], ring[r]]];
+      for (let i = 1; i < (m + 1) / 2; i++) round.push([ring[(r + i) % m], ring[(r - i + m) % m]]);
+      out.push(round.filter(p => p[0] >= 0 && p[1] >= 0).map(p => sorted(...p)));
+    }
+  } else {
+    // complete bipartite: one side is vs[0] plus everyone it never pairs with
+    const linked = new Set(pairs.filter(p => p.includes(vs[0])).flat());
+    let a = vs.filter(v => v === vs[0] || !linked.has(v)), b = vs.filter(v => !a.includes(v));
+    if (a.length > b.length) [a, b] = [b, a];
+    for (let r = 0; r < b.length; r++) out.push(a.map((v, i) => sorted(v, b[(i + r) % b.length])));
+  }
+  return out;
+}
+
+// Games made two at a time from inside each matching, so each matching's
+// games can share a slot. Odd ones out, and any doubled pair, are matched after.
+function factorGames(pairs, extra) {
+  const games = [], pool = [...extra];
+  for (const m of shuffle(factorise(pairs))) {
+    const es = shuffle(m);
+    for (let i = 0; i + 1 < es.length; i += 2) games.push([es[i], es[i + 1]]);
+    if (es.length % 2) pool.push(es[es.length - 1]);
+  }
+  if (!pool.length) return games;
+  const rest = matchPairs(pool);
+  return rest ? games.concat(rest) : null;
+}
+
+function buildSchedule(n, priority, genders, sameSex, courts = 1) {
   const star = (priority != null && priority >= 0 && priority < n) ? priority : null;
   const extras = [], doubled = [];
-  const games = [];
-  for (const pairs of pairGroups(n, genders, sameSex)) {
+  const groups = pairGroups(n, genders, sameSex);
+  const dups = groups.map(() => []);
+  groups.forEach((pairs, gi) => {
     // an odd number of pairs means one pair plays together twice: the starred
     // player if they're in this kind, and never someone who already has an extra
     if (pairs.length % 2 === 1) {
@@ -233,18 +303,35 @@ function buildSchedule(n, priority, genders, sameSex) {
       const from = withStar.length ? withStar : free;
       const d = from[Math.floor(Math.random() * from.length)];
       const pick = d.includes(star) ? [star, d[0] === star ? d[1] : d[0]] : d;
-      pairs.push(d); doubled.push(d); extras.push(...pick);
+      dups[gi].push(d); doubled.push(d); extras.push(...pick);
     }
-    const g = matchPairs(pairs);
-    if (!g) return null;
-    games.push(...g);
-  }
+  });
+  // On one court any set of games will do. On several, how the pairs are
+  // grouped into games decides how tightly they pack, so try many groupings,
+  // alternating the textbook matchings with random ones.
+  const tries = courts > 1 ? 150 : 1;
   let best = null, bs = Infinity;
-  for (let i = 0; i < 300; i++) {
-    const o = orderOnce(games, n); const s = benchScore(o, n);
-    if (s < bs) { bs = s; best = o; }
+  for (let t = 0; t < tries; t++) {
+    const games = [];
+    for (let gi = 0; gi < groups.length; gi++) {
+      const g = (t % 2 && factorGames(groups[gi], dups[gi])) || matchPairs(groups[gi].concat(dups[gi]));
+      if (!g) return null;
+      games.push(...g);
+    }
+    for (let i = 0; i < 300 / tries; i++) {
+      const o = slotOnce(games, n, courts); const s = benchScore(o, n);
+      if (s < bs) { bs = s; best = o; }
+    }
+    if (courts > 1) {
+      const o = slotInOrder(games, courts), s = benchScore(o, n);
+      if (s < bs) { bs = s; best = o; }
+    }
   }
-  return { rounds: best, extras: extras.length ? extras : null, doubled };
+  // a slot that can't fill every court goes last, not first, so nobody stands
+  // around at the start while a court sits empty
+  best = [...best.filter(sl => sl.length === courts), ...best.filter(sl => sl.length < courts)];
+  // rounds stays a flat list of games; slot[i] says which time slot game i is in
+  return { rounds: best.flat(), slot: best.flatMap((sl, i) => sl.map(() => i)), extras: extras.length ? extras : null, doubled };
 }
 
 /* ============ state ============ */
@@ -258,6 +345,7 @@ const FORMATS = {
   same: { short: "Mixed + same", name: "Mixed + same-sex", desc: "Boy &amp; girl v boy &amp; girl, two boys v two boys, two girls v two girls." }
 };
 let format = "any", showOpts = false, genders = names.map(() => "");
+let courts = 1;
 let view = "setup", tab = "rounds";
 let open = null, winner = null, winScore = 9;
 let armed = null, armTimer = null;
@@ -266,13 +354,13 @@ try { const s = localStorage.getItem(T_KEY); if (s) { T = JSON.parse(s); view = 
 try {
   const s = localStorage.getItem(N_KEY);
   if (s) {
-    const d = JSON.parse(s); names = d.names || names; priority = d.priority ?? 0;
+    const d = JSON.parse(s); names = d.names || names; priority = d.priority ?? 0; courts = d.courts || 1;
     genders =names.map((_, i) => (d.genders && d.genders[i]) || "");
   }
 } catch (e) { }
 
 const saveT = () => { try { T ? localStorage.setItem(T_KEY, JSON.stringify(T)) : localStorage.removeItem(T_KEY); } catch (e) { } };
-const saveN = () => { try { localStorage.setItem(N_KEY, JSON.stringify({ names, priority, genders })); } catch (e) { } };
+const saveN = () => { try { localStorage.setItem(N_KEY, JSON.stringify({ names, priority, genders, courts })); } catch (e) { } };
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const app = document.getElementById("app");
 
@@ -332,9 +420,14 @@ function gamesEach() {
 
 // Another full round: the same format built afresh and added to the end, so
 // everyone's game count goes up by the same amount and best-N stays fair
+// which time slot each game is in; older saves have one game per slot
+const slotsOf = () => T.slot || T.rounds.map((_, i) => i);
+
 function addRound() {
-  const built = buildSchedule(T.players.length, T.star ?? null, T.genders || null, T.format === "same");
+  const built = buildSchedule(T.players.length, T.star ?? null, T.genders || null, T.format === "same", T.courts || 1);
   if (!built) return false;
+  const slot = slotsOf();
+  T.slot = slot.concat(built.slot.map(x => x + (slot.length ? slot[slot.length - 1] + 1 : 0)));
   T.starts = [...(T.starts || [0]), T.rounds.length];
   T.rounds = T.rounds.concat(built.rounds);
   if (built.extras) T.extras = [...new Set([...(T.extras || []), ...built.extras])];
@@ -372,6 +465,10 @@ function renderSetup() {
 
   if (T) h += `<button class="resume" data-act="resume">&larr; Back to the tournament in progress</button>`;
 
+  h += `<div class="courts"><span class="eyebrow">Courts</span>`;
+  for (let c = 1; c <= 4; c++) h += `<button class="tab" data-on="${courts === c ? 1 : 0}" data-act="courts" data-v="${c}">${c}</button>`;
+  h += `</div>`;
+
   h += `<div class="eyebrow" style="margin-bottom:9px">Who's playing</div>`;
 
   names.forEach((v, i) => {
@@ -403,7 +500,7 @@ function summaryHTML() {
   const issue = setupIssue();
   if (issue) return issue;
   if (format !== "any") return mixedSummaryHTML(clean, starRaw, format === "same");
-  let h = `<b>${n}</b> players &middot; <b>${gamesN}</b> games &middot; roughly <b>${dur(gamesN * MINS_PER_GAME)}</b> on one court<br>`;
+  let h = `<b>${n}</b> players &middot; <b>${gamesN}</b> games &middot; ${timeHTML(n, gamesN)}<br>`;
   h += `every pair partners up exactly once`;
   if (pairs % 2 === 1) {
     h += `<br><span class="ball">${pairs} pairings is an odd number, so one pair plays together twice. `
@@ -412,7 +509,7 @@ function summaryHTML() {
   } else {
     h += `<br>everyone plays <b>${n - 1}</b> games &mdash; no extras needed`;
   }
-  if (n > 6) h += `<br>${n - 4} sit out each game on a single court`;
+  h += benchHTML(n);
   return h;
 }
 
@@ -428,7 +525,7 @@ function mixedSummaryHTML(clean, starRaw, sameSex) {
   const gamesN = kinds.reduce((s, k) => s + Math.ceil(k.pairs / 2), 0);
   const boyGames = (sameSex && m >= 4 ? m - 1 : 0) + f, girlGames = (sameSex && f >= 4 ? f - 1 : 0) + m;
 
-  let h = `<b>${n}</b> players (${m} boys, ${f} girls) &middot; <b>${gamesN}</b> games &middot; roughly <b>${dur(gamesN * MINS_PER_GAME)}</b> on one court<br>`;
+  let h = `<b>${n}</b> players (${m} boys, ${f} girls) &middot; <b>${gamesN}</b> games &middot; ${timeHTML(n, gamesN)}<br>`;
   const left = [m < 4 && `${m} boys`, f < 4 && `${f} girls`].filter(Boolean);
   if (!sameSex) h += `every boy partners every girl once, always boy &amp; girl v boy &amp; girl`;
   else if (left.length) h += `with only ${andList(left)} there aren't four for a same-sex game, so they only partner the other sex`;
@@ -445,9 +542,23 @@ function mixedSummaryHTML(clean, starRaw, sameSex) {
   if (boyGames === girlGames) h += `<br>everyone plays <b>${boyGames}</b> games${odd.length ? " before extras" : ""}`;
   else h += `<br>boys play <b>${boyGames}</b> games, girls play <b>${girlGames}</b>`;
   if (odd.length || boyGames !== girlGames) h += ` &mdash; only each player's best ${Math.min(boyGames, girlGames)} scores count`;
-  if (n > 6) h += `<br>${n - 4} sit out each game on a single court`;
+  h += benchHTML(n);
   return h;
 }
+
+// the courts actually usable: each needs four players
+const useCourts = n => Math.max(1, Math.min(courts, Math.floor(n / 4)));
+// a guide only: it assumes every slot fills every court
+const timeHTML = (n, gamesN) => {
+  const c = useCourts(n);
+  return `roughly <b>${dur(Math.ceil(gamesN / c) * MINS_PER_GAME)}</b> on ${c === 1 ? "one court" : c + " courts"}`;
+};
+const benchHTML = n => {
+  const c = useCourts(n), off = n - 4 * c;
+  let h = off > 2 || (c > 1 && off) ? `<br>${off} sit out each game${c === 1 ? " on a single court" : ""}` : "";
+  if (courts > c) h += `<br>only enough players for ${c === 1 ? "one court" : c + " courts"} &mdash; ${4 * (c + 1)} needed for ${c + 1}`;
+  return h;
+};
 
 function refreshSummary() {
   const sum = document.getElementById("sum"), go = document.getElementById("go");
@@ -461,6 +572,8 @@ function renderPlay() {
   const total = T.rounds.length;
   const played = Object.keys(T.results).length;
   const nextUp = T.rounds.findIndex((_, i) => !T.results[i]);
+  const slot = slotsOf(), multi = (T.courts || 1) > 1;
+  const liveSlot = nextUp >= 0 ? slot[nextUp] : -1;
 
   let h = `<div class="top"><div>
       <div class="eyebrow">${T.players.length} players${T.format && T.format !== "any" ? " &middot; " + FORMATS[T.format].short.toLowerCase() : ""} &middot; first to 9</div>
@@ -502,16 +615,21 @@ function renderPlay() {
   if (tab === "rounds") {
     const starts = T.starts || [0];
     T.rounds.forEach((g, idx) => {
-      const s = T.results[idx], isOpen = open === idx, isLive = !s && nextUp === idx;
-      const on = new Set([...g[0], ...g[1]]);
-      const bench = T.players.map((_, i) => i).filter(i => !on.has(i));
+      const s = T.results[idx], isOpen = open === idx, isLive = !s && slot[idx] === liveSlot;
+      // on several courts the bench is everyone off every court, shown once per slot
+      const mates = T.rounds.filter((_, j) => slot[j] === slot[idx]);
+      const on = new Set(mates.flatMap(m => [...m[0], ...m[1]]));
+      const lastInSlot = slot[idx + 1] !== slot[idx];
+      const bench = lastInSlot ? T.players.map((_, i) => i).filter(i => !on.has(i)) : [];
+      const court = idx - slot.indexOf(slot[idx]) + 1;
+      const label = multi ? `Game ${slot[idx] + 1} &middot; court ${court}` : `Game ${idx + 1}`;
 
       const r = starts.indexOf(idx);
       if (starts.length > 1 && r >= 0)
         h += `<div class="eyebrow" style="margin:${r ? 20 : 0}px 0 9px">Round ${r + 1}${r ? " &middot; everyone again" : ""}</div>`;
 
       h += `<div class="card" data-live="${isLive ? 1 : 0}" data-done="${s && !isOpen ? 1 : 0}">
-        <div class="chead"><div class="eyebrow">${isLive ? "On court &middot; game " + (idx + 1) : "Game " + (idx + 1)}</div>`;
+        <div class="chead"><div class="eyebrow">${isLive ? "On court &middot; " + label.toLowerCase() : label}</div>`;
       if (s && !isOpen) h += `<button class="final" data-act="edit" data-v="${idx}">${s.a}&ndash;${s.b} &middot; change</button>`;
       h += `</div>`;
       h += matchHTML(idx, g, s);
@@ -601,6 +719,7 @@ app.addEventListener("click", e => {
   if (act === "star") { syncInputs(); priority = i; saveN(); render(); }
   else if (act === "opts") { syncInputs(); showOpts = !showOpts; render(); }
   else if (act === "format") { syncInputs(); format = v; showOpts = false; render(); }
+  else if (act === "courts") { syncInputs(); courts = +v; saveN(); render(); }
   else if (act === "sex") { syncInputs(); genders[i] = genders[i] === "m" ? "f" : "m"; saveN(); render(); }
   else if (act === "add") { syncInputs(); names.push(""); genders.push(""); saveN(); render(); app.querySelector(`.pin[data-i="${names.length - 1}"]`).focus(); }
   else if (act === "del") {
@@ -618,12 +737,13 @@ app.addEventListener("click", e => {
     const starRaw = names[priority] ? names[priority].trim() : "";
     const pIdx = starRaw ? clean.indexOf(starRaw) : -1;
     const built = buildSchedule(clean.length, pIdx >= 0 ? pIdx : null,
-      format === "any" ? null : cleanGenders(), format === "same");
+      format === "any" ? null : cleanGenders(), format === "same", useCourts(clean.length));
     if (!built) { alert("Couldn't build a schedule for that many players. Try adding or removing one."); return; }
     const gp = new Array(clean.length).fill(0);
     built.rounds.forEach(g => [...g[0], ...g[1]].forEach(p => gp[p]++));
     T = { players: clean, rounds: built.rounds, extras: built.extras, results: {}, countBest: Math.min(...gp), format,
-          genders: format === "any" ? null : cleanGenders(), star: pIdx >= 0 ? pIdx : null, starts: [0], final: null };
+          genders: format === "any" ? null : cleanGenders(), star: pIdx >= 0 ? pIdx : null, starts: [0], final: null,
+          courts: useCourts(clean.length), slot: built.slot };
     saveT(); saveN();
     view = "play"; tab = "rounds"; open = null; winner = null; armed = null;
     render(); window.scrollTo(0, 0);
@@ -668,6 +788,13 @@ app.addEventListener("click", e => {
 
 render();
 if ("serviceWorker" in navigator) {
+  // when a new version's worker takes over, reload once so it shows straight
+  // away (not on first install, when there was no worker before)
+  const hadWorker = !!navigator.serviceWorker.controller;
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (hadWorker && !reloaded) { reloaded = true; location.reload(); }
+  });
   window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => { }));
 }
 </script>
