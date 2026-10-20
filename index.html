@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Padel</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#062A2B">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Padel">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --deep:#062A2B; --court:#0C4341; --tile:#125B57; --tile-hi:#17706B;
+  --line:#EDF2EE; --ball:#DDF247; --mute:rgba(237,242,238,.55);
+  --hair:rgba(237,242,238,.16);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+html,body{margin:0;background:var(--deep);}
+body{
+  color:var(--line);
+  font-family:'Archivo',system-ui,-apple-system,sans-serif;
+  padding:calc(env(safe-area-inset-top) + 18px) 14px calc(env(safe-area-inset-bottom) + 44px);
+  max-width:520px;margin:0 auto;-webkit-font-smoothing:antialiased;
+}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit;padding:0;}
+button:focus-visible,input:focus-visible{outline:2px solid var(--ball);outline-offset:2px;}
+
+.eyebrow{font-family:'DM Mono',ui-monospace,monospace;font-size:10px;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--mute);}
+
+.top{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:16px;}
+h1{font-size:26px;font-weight:800;letter-spacing:-.035em;line-height:.95;margin:2px 0 0;}
+.prog{font-family:'DM Mono',monospace;font-size:11px;color:var(--mute);text-align:right;line-height:1.4;}
+.prog b{color:var(--ball);font-weight:500;}
+
+.tabs{display:flex;gap:6px;margin-bottom:16px;}
+.tab{flex:1;padding:10px 0;border-radius:9px;font-size:13px;font-weight:600;
+  background:var(--court);color:var(--mute);transition:.16s;}
+.tab[data-on="1"]{background:var(--line);color:var(--deep);}
+
+/* ---------- setup ---------- */
+.prow{display:flex;align-items:center;gap:8px;margin-bottom:7px;}
+.star{width:40px;height:44px;border-radius:9px;background:var(--court);flex:none;
+  font-size:15px;color:var(--mute);line-height:1;transition:.16s;}
+.star[data-on="1"]{background:var(--ball);color:var(--deep);}
+.pin{flex:1;min-width:0;height:44px;border-radius:9px;background:var(--court);border:none;
+  color:var(--line);font-family:inherit;font-size:15px;font-weight:600;padding:0 13px;
+  letter-spacing:-.01em;}
+.pin::placeholder{color:rgba(237,242,238,.3);font-weight:400;}
+.del{width:40px;height:44px;border-radius:9px;flex:none;color:var(--mute);font-size:17px;
+  box-shadow:inset 0 0 0 1px var(--hair);line-height:1;}
+.add{width:100%;padding:12px;border-radius:9px;font-size:13px;font-weight:600;
+  color:var(--mute);box-shadow:inset 0 0 0 1px var(--hair);margin-top:2px;}
+.summary{background:var(--court);border-radius:12px;padding:13px;margin:14px 0 12px;
+  font-family:'DM Mono',monospace;font-size:11.5px;line-height:1.75;color:var(--mute);}
+.summary b{color:var(--line);font-weight:500;}
+.summary .ball{color:var(--ball);}
+.go{width:100%;padding:15px;border-radius:11px;background:var(--ball);color:var(--deep);
+  font-size:15px;font-weight:800;letter-spacing:-.01em;}
+.go[disabled]{background:var(--court);color:var(--mute);font-weight:600;cursor:default;}
+.resume{width:100%;padding:13px;border-radius:11px;font-size:13px;font-weight:600;
+  box-shadow:inset 0 0 0 1px var(--hair);margin-bottom:16px;color:var(--line);}
+.hint{font-family:'DM Mono',monospace;font-size:10.5px;color:var(--mute);
+  line-height:1.7;margin:10px 0 2px;}
+
+/* ---------- rounds ---------- */
+.card{background:var(--court);border-radius:14px;padding:13px 13px 11px;margin-bottom:9px;
+  border-left:3px solid transparent;transition:.2s;}
+.card[data-live="1"]{border-left-color:var(--ball);}
+.card[data-done="1"]{opacity:.82;}
+.chead{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px;gap:10px;}
+.final{font-family:'DM Mono',monospace;font-size:12px;color:var(--mute);flex:none;}
+
+.side{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:11px 12px;border-radius:9px;background:var(--tile);text-align:left;transition:.16s;}
+.side:active{background:var(--tile-hi);}
+.side[data-pick="1"]{background:var(--ball);color:var(--deep);}
+.side[data-lost="1"]{background:transparent;box-shadow:inset 0 0 0 1px var(--hair);color:var(--mute);}
+.names{font-size:15px;font-weight:600;letter-spacing:-.01em;}
+.pts{font-family:'DM Mono',monospace;font-size:22px;font-weight:500;font-variant-numeric:tabular-nums;}
+
+.net{display:flex;align-items:center;gap:9px;margin:7px 2px;}
+.net span{flex:1;height:1px;background:rgba(237,242,238,.2);}
+.net i{font-family:'DM Mono',monospace;font-style:normal;font-size:10px;color:var(--mute);}
+
+.bench{margin-top:10px;padding-top:9px;border-top:1px dashed rgba(237,242,238,.14);
+  font-family:'DM Mono',monospace;font-size:11px;color:var(--mute);line-height:1.5;}
+
+.ask{margin-top:11px;}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+.chip{width:38px;height:38px;border-radius:8px;background:var(--tile);
+  font-family:'DM Mono',monospace;font-size:15px;font-variant-numeric:tabular-nums;}
+.chip:active{background:var(--ball);color:var(--deep);}
+.winline{display:flex;align-items:center;gap:8px;margin-top:10px;
+  font-family:'DM Mono',monospace;font-size:11px;color:var(--mute);}
+.step{width:24px;height:24px;border-radius:6px;background:var(--tile);font-size:14px;line-height:1;}
+.winval{color:var(--ball);font-variant-numeric:tabular-nums;min-width:14px;text-align:center;}
+
+/* ---------- table ---------- */
+.row{display:flex;align-items:center;gap:12px;padding:12px 13px;background:var(--court);
+  border-radius:12px;margin-bottom:7px;border-left:3px solid transparent;}
+.row[data-lead="1"]{border-left-color:var(--ball);}
+.rank{font-family:'DM Mono',monospace;font-size:12px;color:var(--mute);width:16px;font-variant-numeric:tabular-nums;}
+.who{flex:1;min-width:0;}
+.nm{font-size:15px;font-weight:600;letter-spacing:-.01em;}
+.sub{font-family:'DM Mono',monospace;font-size:10.5px;color:var(--mute);margin-top:2px;line-height:1.45;}
+.drop{color:var(--ball);}
+.avg{font-family:'DM Mono',monospace;font-size:20px;font-variant-numeric:tabular-nums;letter-spacing:-.02em;}
+.row[data-lead="1"] .avg{color:var(--ball);}
+
+.empty{padding:26px 14px;text-align:center;color:var(--mute);font-size:13px;line-height:1.55;}
+.note{margin-top:14px;font-family:'DM Mono',monospace;font-size:10.5px;color:var(--mute);line-height:1.65;}
+.foot{display:flex;gap:6px;margin-top:20px;}
+.foot button{flex:1;padding:11px;border-radius:9px;font-size:12px;
+  font-family:'DM Mono',monospace;color:var(--mute);box-shadow:inset 0 0 0 1px var(--hair);}
+.foot button[data-armed="1"]{color:var(--deep);background:var(--ball);box-shadow:none;}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+"use strict";
+const T_KEY = "padel-tournament-v2";
+const N_KEY = "padel-names-v2";
+const MINS_PER_GAME = 12;
+
+/* ============ schedule generation ============ */
+const shuffle = a => { a = [...a]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const disjoint = (x, y) => x[0] !== y[0] && x[0] !== y[1] && x[1] !== y[0] && x[1] !== y[1];
+
+function allPairs(n) { const r = []; for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) r.push([i, j]); return r; }
+
+function matchPairs(pairs) {
+  for (let attempt = 0; attempt < 800; attempt++) {
+    const rem = shuffle(pairs.map((p, i) => ({ p, id: i })));
+    const used = new Set(); const games = []; let ok = true;
+    while (used.size < pairs.length) {
+      const avail = rem.filter(x => !used.has(x.id));
+      let best = null, bestCount = Infinity;
+      for (const x of avail) {
+        let c = 0; for (const y of avail) if (y.id !== x.id && disjoint(x.p, y.p)) c++;
+        if (c < bestCount) { bestCount = c; best = x; }
+      }
+      if (!best || bestCount === 0) { ok = false; break; }
+      const opts = avail.filter(y => y.id !== best.id && disjoint(best.p, y.p));
+      let pick = null, pc = Infinity;
+      for (const y of opts) {
+        let c = 0; for (const z of avail) if (z.id !== y.id && z.id !== best.id && disjoint(y.p, z.p)) c++;
+        if (c < pc) { pc = c; pick = y; }
+      }
+      used.add(best.id); used.add(pick.id);
+      games.push([best.p, pick.p]);
+    }
+    if (ok && games.length * 2 === pairs.length) return games;
+  }
+  return null;
+}
+
+function orderOnce(games, n) {
+  const remaining = [...games], ordered = [], played = new Array(n).fill(0), run = new Array(n).fill(0);
+  while (remaining.length) {
+    let bi = -1, bs = Infinity;
+    remaining.forEach((g, idx) => {
+      const on = new Set([...g[0], ...g[1]]);
+      let s = 0;
+      for (let p = 0; p < n; p++) if (!on.has(p)) s += 40 * (run[p] + 1) * (run[p] + 1);
+      on.forEach(p => s += 4 * played[p]);
+      s += Math.random() * 0.5;
+      if (s < bs) { bs = s; bi = idx; }
+    });
+    const g = remaining.splice(bi, 1)[0];
+    ordered.push(g);
+    const on = new Set([...g[0], ...g[1]]);
+    for (let p = 0; p < n; p++) { if (on.has(p)) { played[p]++; run[p] = 0; } else run[p]++; }
+  }
+  return ordered;
+}
+
+function benchScore(rounds, n) {
+  const run = new Array(n).fill(0); let worst = 0, total = 0;
+  rounds.forEach(g => {
+    const on = new Set([...g[0], ...g[1]]);
+    for (let p = 0; p < n; p++) { if (on.has(p)) run[p] = 0; else { run[p]++; worst = Math.max(worst, run[p]); total += run[p]; } }
+  });
+  return worst * 1000 + total;
+}
+
+function buildSchedule(n, priority) {
+  const pairs = allPairs(n);
+  let extras = null;
+  if (pairs.length % 2 === 1) {
+    const a = (priority != null && priority >= 0 && priority < n) ? priority : Math.floor(Math.random() * n);
+    const others = [...Array(n).keys()].filter(x => x !== a);
+    const b = others[Math.floor(Math.random() * others.length)];
+    pairs.push([Math.min(a, b), Math.max(a, b)]);
+    extras = [a, b];
+  }
+  const games = matchPairs(pairs);
+  if (!games) return null;
+  let best = null, bs = Infinity;
+  for (let i = 0; i < 300; i++) {
+    const o = orderOnce(games, n); const s = benchScore(o, n);
+    if (s < bs) { bs = s; best = o; }
+  }
+  return { rounds: best, extras };
+}
+
+/* ============ state ============ */
+let T = null;
+let names = ["", "", "", ""];
+let priority = 0;
+let view = "setup", tab = "rounds";
+let open = null, winner = null, winScore = 9;
+let armed = null, armTimer = null;
+
+try { const s = localStorage.getItem(T_KEY); if (s) { T = JSON.parse(s); view = "play"; } } catch (e) { }
+try {
+  const s = localStorage.getItem(N_KEY);
+  if (s) { const d = JSON.parse(s); names = d.names || names; priority = d.priority ?? 0; }
+} catch (e) { }
+
+const saveT = () => { try { T ? localStorage.setItem(T_KEY, JSON.stringify(T)) : localStorage.removeItem(T_KEY); } catch (e) { } };
+const saveN = () => { try { localStorage.setItem(N_KEY, JSON.stringify({ names, priority })); } catch (e) { } };
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const app = document.getElementById("app");
+
+function cleanNames() { return names.map(s => s.trim()).filter(Boolean); }
+function dupes() { const c = cleanNames().map(s => s.toLowerCase()); return c.length !== new Set(c).size; }
+function syncInputs() {
+  app.querySelectorAll(".pin").forEach(el => { names[+el.dataset.i] = el.value; });
+}
+function dur(mins) {
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return (h ? h + "h " : "") + m + "m";
+}
+
+/* ============ scoring ============ */
+function standings() {
+  const n = T.players.length;
+  const scores = T.players.map(() => []);
+  const wins = new Array(n).fill(0);
+  T.rounds.forEach((g, idx) => {
+    const s = T.results[idx];
+    if (!s) return;
+    g[0].forEach(p => { scores[p].push(s.a); if (s.a > s.b) wins[p]++; });
+    g[1].forEach(p => { scores[p].push(s.b); if (s.b > s.a) wins[p]++; });
+  });
+  return T.players.map((name, p) => {
+    const sorted = [...scores[p]].sort((x, y) => y - x);
+    const kept = sorted.slice(0, T.countBest);
+    const dropped = sorted.slice(T.countBest);
+    return {
+      name, p,
+      total: kept.reduce((a, b) => a + b, 0),
+      played: scores[p].length,
+      wins: wins[p],
+      dropped,
+      extra: T.extras ? T.extras.includes(p) : false
+    };
+  }).sort((x, y) => y.total - x.total || y.wins - x.wins || x.name.localeCompare(y.name));
+}
+
+/* ============ render ============ */
+function renderSetup() {
+  const bad = cleanNames().length < 4 || dupes();
+
+  let h = `<div class="top"><div>
+      <div class="eyebrow">Padel &middot; first to 9</div>
+      <h1>Everyone<br>plays everyone</h1></div></div>`;
+
+  if (T) h += `<button class="resume" data-act="resume">&larr; Back to the tournament in progress</button>`;
+
+  h += `<div class="eyebrow" style="margin-bottom:9px">Who's playing</div>`;
+
+  names.forEach((v, i) => {
+    h += `<div class="prow">
+      <button class="star" data-on="${priority === i ? 1 : 0}" data-act="star" data-i="${i}" title="Gets the extra game">&#9733;</button>
+      <input class="pin" data-i="${i}" value="${esc(v)}" placeholder="Player ${i + 1}"
+             autocomplete="off" autocapitalize="words" spellcheck="false" enterkeyhint="next">
+      <button class="del" data-act="del" data-i="${i}">&times;</button>
+    </div>`;
+  });
+
+  h += `<button class="add" data-act="add">+ Add player</button>`;
+
+  h += `<div class="hint">&#9733; marks who gets the extra game when the numbers don't divide evenly. They're joined by one other player, picked at random each time you build a schedule.</div>`;
+
+  h += `<div class="summary" id="sum">${summaryHTML()}</div>`;
+  h += `<button class="go" id="go" data-act="create" ${bad ? "disabled" : ""}>Build the schedule</button>`;
+  app.innerHTML = h;
+}
+
+function summaryHTML() {
+  const clean = cleanNames();
+  const n = clean.length;
+  const pairs = n >= 2 ? n * (n - 1) / 2 : 0;
+  const gamesN = pairs % 2 ? (pairs + 1) / 2 : pairs / 2;
+  const starRaw = names[priority] ? names[priority].trim() : "";
+  if (n < 4) return `Add at least <b>4</b> players.`;
+  if (dupes()) return `Two players have the same name &mdash; give them something to tell them apart.`;
+  let h = `<b>${n}</b> players &middot; <b>${gamesN}</b> games &middot; roughly <b>${dur(gamesN * MINS_PER_GAME)}</b> on one court<br>`;
+  h += `every pair partners up exactly once`;
+  if (pairs % 2 === 1) {
+    h += `<br><span class="ball">${pairs} pairings is an odd number, so one pair plays together twice. `
+       + `${starRaw ? esc(starRaw) : "The starred player"} and one other play ${n} games; everyone else plays ${n - 1}. `
+       + `Only each player's best ${n - 1} scores count.</span>`;
+  } else {
+    h += `<br>everyone plays <b>${n - 1}</b> games &mdash; no extras needed`;
+  }
+  if (n > 6) h += `<br>${n - 4} sit out each game on a single court`;
+  return h;
+}
+
+function refreshSummary() {
+  const sum = document.getElementById("sum"), go = document.getElementById("go");
+  if (!sum || !go) return;
+  sum.innerHTML = summaryHTML();
+  go.disabled = cleanNames().length < 4 || dupes();
+}
+
+function renderPlay() {
+  const nm = i => T.players[i];
+  const total = T.rounds.length;
+  const played = Object.keys(T.results).length;
+  const nextUp = T.rounds.findIndex((_, i) => !T.results[i]);
+
+  let h = `<div class="top"><div>
+      <div class="eyebrow">${T.players.length} players &middot; first to 9</div>
+      <h1>Everyone<br>plays everyone</h1></div>
+      <div class="prog"><b>${played}</b>/${total}<br>games</div></div>`;
+
+  h += `<div class="tabs">
+      <button class="tab" data-on="${tab === "rounds" ? 1 : 0}" data-act="tab" data-v="rounds">Rounds</button>
+      <button class="tab" data-on="${tab === "table" ? 1 : 0}" data-act="tab" data-v="table">Table</button></div>`;
+
+  if (tab === "rounds") {
+    T.rounds.forEach((g, idx) => {
+      const s = T.results[idx], isOpen = open === idx, isLive = !s && nextUp === idx;
+      const on = new Set([...g[0], ...g[1]]);
+      const bench = T.players.map((_, i) => i).filter(i => !on.has(i));
+
+      h += `<div class="card" data-live="${isLive ? 1 : 0}" data-done="${s && !isOpen ? 1 : 0}">
+        <div class="chead"><div class="eyebrow">${isLive ? "On court &middot; game " + (idx + 1) : "Game " + (idx + 1)}</div>`;
+      if (s && !isOpen) h += `<button class="final" data-act="edit" data-v="${idx}">${s.a}&ndash;${s.b} &middot; change</button>`;
+      h += `</div>`;
+
+      [["a", g[0]], ["b", g[1]]].forEach(([side, pr], i) => {
+        if (i === 1) h += `<div class="net"><span></span><i>v</i><span></span></div>`;
+        h += `<button class="side"
+                data-pick="${isOpen && winner === side ? 1 : 0}"
+                data-lost="${isOpen && winner && winner !== side ? 1 : 0}"
+                data-act="side" data-v="${idx}" data-side="${side}">
+                <span class="names">${esc(nm(pr[0]))} &amp; ${esc(nm(pr[1]))}</span>`;
+        if (s && !isOpen) h += `<span class="pts">${side === "a" ? s.a : s.b}</span>`;
+        h += `</button>`;
+      });
+
+      if (bench.length) h += `<div class="bench">bench &middot; ${bench.map(i => esc(nm(i))).join(", ")}</div>`;
+
+      if (isOpen && !winner) h += `<div class="ask"><div class="eyebrow">Tap the pair that won</div></div>`;
+      if (isOpen && winner) {
+        h += `<div class="ask"><div class="eyebrow">How many did the losers get?</div><div class="chips">`;
+        for (let v = 0; v < winScore; v++) h += `<button class="chip" data-act="score" data-v="${v}">${v}</button>`;
+        h += `</div><div class="winline"><span>winners scored</span>
+              <button class="step" data-act="dn">&minus;</button>
+              <span class="winval">${winScore}</span>
+              <button class="step" data-act="up">+</button></div></div>`;
+      }
+      h += `</div>`;
+    });
+  } else {
+    if (played === 0) {
+      h += `<div class="empty">No scores yet.<br>Play game 1, then tap the pair that won.</div>`;
+    } else {
+      standings().forEach((r, i) => {
+        let sub = `${r.played} played &middot; ${r.wins} won`;
+        if (r.dropped.length) sub += ` &middot; <span class="drop">dropped ${r.dropped.join(", ")}</span>`;
+        h += `<div class="row" data-lead="${i === 0 ? 1 : 0}">
+            <span class="rank">${i + 1}</span>
+            <div class="who"><div class="nm">${esc(r.name)}</div><div class="sub">${sub}</div></div>
+            <span class="avg">${r.total}</span></div>`;
+      });
+      if (T.extras) {
+        h += `<div class="note">Totals are each player's best ${T.countBest} games.
+          ${esc(T.players[T.extras[0]])} and ${esc(T.players[T.extras[1]])} play one game more,
+          so once they've played ${T.countBest + 1} their lowest score drops out.</div>`;
+      } else {
+        h += `<div class="note">Everyone plays ${T.countBest} games, so totals are straight sums.</div>`;
+      }
+    }
+  }
+
+  h += `<div class="foot">
+      <button data-act="clear" data-armed="${armed === "clear" ? 1 : 0}">${armed === "clear" ? "Tap again" : "Clear scores"}</button>
+      <button data-act="setup">New tournament</button>
+    </div>`;
+  app.innerHTML = h;
+}
+
+const render = () => view === "setup" ? renderSetup() : renderPlay();
+
+/* ============ events ============ */
+app.addEventListener("input", e => {
+  if (!e.target.classList.contains("pin")) return;
+  names[+e.target.dataset.i] = e.target.value;
+  refreshSummary();
+});
+
+app.addEventListener("keydown", e => {
+  if (e.key !== "Enter" || !e.target.classList.contains("pin")) return;
+  e.preventDefault();
+  const i = +e.target.dataset.i;
+  const next = app.querySelector(`.pin[data-i="${i + 1}"]`);
+  if (next) next.focus();
+  else { syncInputs(); names.push(""); saveN(); render(); app.querySelector(`.pin[data-i="${names.length - 1}"]`).focus(); }
+});
+
+app.addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  const act = b.dataset.act, v = b.dataset.v, i = +b.dataset.i;
+
+  if (act === "star") { syncInputs(); priority = i; saveN(); render(); }
+  else if (act === "add") { syncInputs(); names.push(""); saveN(); render(); app.querySelector(`.pin[data-i="${names.length - 1}"]`).focus(); }
+  else if (act === "del") {
+    syncInputs();
+    if (names.length <= 1) return;
+    names.splice(i, 1);
+    if (priority === i) priority = 0; else if (priority > i) priority--;
+    saveN(); render();
+  }
+  else if (act === "create") {
+    syncInputs();
+    const clean = cleanNames();
+    if (clean.length < 4 || dupes()) return;
+    // priority index within the cleaned list
+    const starRaw = names[priority] ? names[priority].trim() : "";
+    const pIdx = starRaw ? clean.indexOf(starRaw) : -1;
+    const built = buildSchedule(clean.length, pIdx >= 0 ? pIdx : null);
+    if (!built) { alert("Couldn't build a schedule for that many players. Try adding or removing one."); return; }
+    const gp = new Array(clean.length).fill(0);
+    built.rounds.forEach(g => [...g[0], ...g[1]].forEach(p => gp[p]++));
+    T = { players: clean, rounds: built.rounds, extras: built.extras, results: {}, countBest: Math.min(...gp) };
+    saveT(); saveN();
+    view = "play"; tab = "rounds"; open = null; winner = null; armed = null;
+    render(); window.scrollTo(0, 0);
+  }
+  else if (act === "resume") { view = "play"; render(); window.scrollTo(0, 0); }
+  else if (act === "setup") { syncInputs(); view = "setup"; armed = null; render(); window.scrollTo(0, 0); }
+  else if (act === "tab") { tab = v; open = null; winner = null; render(); }
+  else if (act === "edit") { open = +v; winner = null; winScore = 9; render(); }
+  else if (act === "side") {
+    const idx = +v;
+    if (open !== idx) { open = idx; winner = null; winScore = 9; }
+    else if (!winner) winner = b.dataset.side;
+    render();
+  }
+  else if (act === "score") {
+    const loser = +v;
+    T.results[open] = winner === "a" ? { a: winScore, b: loser } : { a: loser, b: winScore };
+    saveT(); open = null; winner = null; winScore = 9; render();
+  }
+  else if (act === "up") { winScore = Math.min(21, winScore + 1); render(); }
+  else if (act === "dn") { winScore = Math.max(9, winScore - 1); render(); }
+  else if (act === "clear") {
+    clearTimeout(armTimer);
+    if (armed === "clear") { T.results = {}; saveT(); armed = null; open = null; }
+    else { armed = "clear"; armTimer = setTimeout(() => { armed = null; render(); }, 3000); }
+    render();
+  }
+});
+
+render();
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => { }));
+}
+</script>
+</body>
+</html>
