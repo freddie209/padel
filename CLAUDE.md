@@ -18,7 +18,7 @@ test.js       node test harness — runs the real code out of index.html
 
 State lives in two `localStorage` keys, both per-device:
 
-- `padel-tournament-v2` — the live tournament `{players, rounds, extras, results, countBest, format, genders, star, starts, final, courts, slot}` (everything after `countBest` is optional, so older saves still load)
+- `padel-tournament-v2` — the live tournament `{players, rounds, extras, results, countBest, format, genders, star, starts, final, courts, slot, target, limitGames}` (everything after `countBest` is optional, so older saves still load)
 - `padel-names-v2` — the last player list, starred index and genders, so setup is prefilled next time
 
 There is no sync. One person scores. If the shape of the stored object ever
@@ -77,6 +77,22 @@ with the greedy `slotOnce` and first-fit `slotInOrder`. `benchScore` ranks
 fewest slots first, then bench runs. Part-full slots go last. Almost every
 case hits the minimum number of slots; `test.js` prints used/minimum.
 
+**Points to win** (`points`, −/+ on setup, 3–21, saved; stored as
+`T.target`): scoring chips, the winners' default and the eyebrow all follow
+it. Minutes per game scale with it (`minsPerGame`, 12 min at first to 9).
+
+**Time limit** (`limit`, the Time limit button beside Format; not saved, so
+every visit starts with none). `needsCut(n)` compares `fullMins(n)` — the
+full schedule's slots × minutes per game — with the limit. If it won't fit,
+`limitedPlan(n)` picks the most games each `k` with `n·k/4` a whole number of
+games that fits, so everyone plays exactly `k`; otherwise it fills the time
+and some play one fewer (best-N absorbs it). `buildLimited` then builds that
+many games slot by slot, least-played first, preferring new partnerships —
+partners vary but not every pair plays together. `T.limitGames` makes
+another round add another limited block, avoiding partners already used.
+`fitPoints(n)` offers a lower points target that would fit the full
+schedule, shown as a button in the summary.
+
 **Another round** (`addRound()`, button at the bottom of Rounds, tap twice):
 builds the same format afresh and appends it, recording where it starts in
 `T.starts`, so everyone's count rises together and best-N stays fair.
@@ -120,7 +136,7 @@ menu → Install app.
 Live at https://freddie209.github.io/padel/ (GitHub Pages, `master`, root).
 Push to `master` to deploy.
 
-**After changing `index.html`, bump `CACHE` in `sw.js`** (`padel-v3` → `v4`…).
+**After changing `index.html`, bump `CACHE` in `sw.js`** (`padel-v4` → `v5`…).
 The service worker is cache-first, so without a bump an installed copy keeps
 serving the old version. With a bump, the new worker installs in the
 background on the next open and the page reloads itself once

@@ -192,6 +192,54 @@ for (const [courts, n, sx, sameSex] of [
   console.log(`  ${tag.padEnd(26)} ${String(built.rounds.length).padStart(2)} games in ${slots.length}/${floor} slots`);
 }
 
+/* ---------- 1d. time limit: fewer games, the same number each ---------- */
+console.log("\nTime limit (games each, slots used / slots in the time)\n");
+
+const setup = (n, sx, format, courts, limit, points) => vm.runInContext(
+  `names = ${JSON.stringify(POOL.slice(0, n))}; genders = ${JSON.stringify(sx || Array(n).fill(""))};
+   format = ${JSON.stringify(format)}; courts = ${courts}; limit = ${limit}; points = ${points};`, ctx);
+const mf = n => Array.from({ length: n }, (_, i) => i % 2 ? "f" : "m");
+
+for (const [n, courts, limit, points, format] of [
+  [8, 1, 60, 9, "any"], [10, 1, 60, 9, "any"], [12, 2, 60, 9, "any"], [9, 1, 90, 9, "any"],
+  [7, 1, 60, 9, "any"], [14, 3, 60, 9, "any"], [16, 4, 60, 9, "any"], [6, 1, 30, 9, "any"],
+  [12, 2, 60, 7, "any"], [8, 2, 45, 9, "mixed"], [10, 2, 60, 9, "same"]]) {
+  const sx = format === "any" ? null : mf(n);
+  setup(n, sx, format, courts, limit, points);
+  const tag = `${n}p ${courts}c ${limit}m first-to-${points} ${format}`;
+  check(vm.runInContext(`needsCut(${n})`, ctx), `${tag} should need cutting down`);
+  const lp = vm.runInContext(`limitedPlan(${n})`, ctx);
+  check(!!lp, `${tag} has a plan`);
+  if (!lp) continue;
+  const C = Math.min(courts, Math.floor(n / 4));
+  const b = ctx.buildLimited(n, sx, format === "same", C, lp.G);
+  check(b.rounds.length === lp.G, `${tag} made ${b.rounds.length} of ${lp.G} games`);
+
+  const gp = new Array(n).fill(0), seen = {};
+  b.rounds.forEach((g, i) => {
+    check(new Set([...g[0], ...g[1]]).size === 4, `${tag} game ${i + 1} has a duplicate player`);
+    if (sx) check(kind(g[0], sx) === kind(g[1], sx), `${tag} game ${i + 1} is ${kind(g[0], sx)} v ${kind(g[1], sx)}`);
+    if (format === "mixed") check(kind(g[0], sx) === "mf", `${tag} game ${i + 1} isn't boy & girl`);
+    [...g[0], ...g[1]].forEach(p => gp[p]++);
+    g.forEach(p => { const k = p.join("-"); check(!seen[k], `${tag} ${k} partner twice`); seen[k] = 1; });
+  });
+  const lo = Math.min(...gp), hi = Math.max(...gp);
+  check(lo >= 1, `${tag} someone never plays`);
+  if (lp.G * 4 === n * lp.k && format === "any") check(lo === hi, `${tag} should be ${lp.k} each, got ${lo}-${hi}`);
+  else check(hi - lo <= 1 || format !== "any", `${tag} spread ${lo}-${hi} is more than one`);
+
+  const slots = Math.max(...b.slot) + 1, inTime = Math.floor(limit / (12 * points / 9));
+  check(slots <= inTime, `${tag} needs ${slots} slots, only ${inTime} fit`);
+  console.log(`  ${tag.padEnd(30)} ${String(lp.G).padStart(2)} games, ${lo === hi ? lo : lo + "-" + hi} each, ${slots}/${inTime} slots`);
+}
+
+// no time limit, or one that's long enough, leaves the full schedule alone
+setup(8, null, "any", 1, 0, 9); check(!vm.runInContext("needsCut(8)", ctx), "no limit never cuts");
+setup(8, null, "any", 2, 180, 9); check(!vm.runInContext("needsCut(8)", ctx), "3 hours fits 8 on two courts");
+// and suggests fewer points when that would fit everyone-with-everyone
+setup(8, null, "any", 2, 75, 9);
+check(vm.runInContext("fitPoints(8)", ctx) === 8, `8 on two courts in 75 min: first to 8 should fit, got ${vm.runInContext("fitPoints(8)", ctx)}`);
+
 /* ---------- 2. scoring: best-N, worst dropped, no averages ---------- */
 console.log("\nScoring (6 players, Freddie starred)");
 

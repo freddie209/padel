@@ -57,9 +57,16 @@ h1{font-size:26px;font-weight:800;letter-spacing:-.035em;line-height:.95;margin:
 .opt[data-on="1"]{background:var(--line);color:var(--deep);}
 .opt .nm{font-size:14px;}
 .opt .sub{color:inherit;opacity:.7;}
-.courts{display:flex;align-items:center;gap:6px;margin-bottom:16px;}
-.courts .eyebrow{flex:1;}
-.courts .tab{flex:none;width:44px;height:38px;padding:0;font-family:'DM Mono',monospace;}
+.topbtns{display:flex;flex-direction:column;align-items:flex-end;gap:6px;}
+.setrow{display:flex;align-items:center;gap:6px;margin-bottom:10px;}
+.setrow + .eyebrow{margin-top:16px;}
+.setrow .eyebrow{flex:1;}
+.setrow .tab{flex:none;width:44px;height:38px;padding:0;font-family:'DM Mono',monospace;}
+.pval{width:44px;text-align:center;font-family:'DM Mono',monospace;font-size:17px;font-variant-numeric:tabular-nums;}
+.tgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
+.tgrid .opt{text-align:center;padding:12px 4px;font-size:13px;font-weight:600;}
+.suggest{display:block;width:100%;margin-top:9px;padding:11px;border-radius:9px;font-family:'Archivo',sans-serif;
+  font-size:13px;font-weight:600;color:var(--line);box-shadow:inset 0 0 0 1px var(--line);}
 .sex{width:54px;height:44px;border-radius:9px;background:var(--tile);flex:none;
   font-size:13px;font-weight:600;transition:.16s;}
 .sex[data-g=""]{background:none;color:var(--mute);box-shadow:inset 0 0 0 1px var(--hair);}
@@ -148,7 +155,8 @@ h1{font-size:26px;font-weight:800;letter-spacing:-.035em;line-height:.95;margin:
 "use strict";
 const T_KEY = "padel-tournament-v2";
 const N_KEY = "padel-names-v2";
-const MINS_PER_GAME = 12;
+const MINS_PER_GAME = 12;   // at first to 9; scales with the points
+const minsPerGame = pts => MINS_PER_GAME * pts / 9;
 
 /* ============ schedule generation ============ */
 const shuffle = a => { a = [...a]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
@@ -334,6 +342,56 @@ function buildSchedule(n, priority, genders, sameSex, courts = 1) {
   return { rounds: best.flat(), slot: best.flatMap((sl, i) => sl.map(() => i)), extras: extras.length ? extras : null, doubled };
 }
 
+// Time-limited: G games, built slot by slot, where everyone plays as near the
+// same number as the format allows. Each court takes four of those who've
+// played least (then sat out longest), split into two partnerships that are
+// new if possible, so partners vary even though not every pair gets a game.
+// `avoid` is partnerships already played, for a second block.
+function buildLimited(n, genders, sameSex, courts, G, avoid = []) {
+  const key = (a, b) => a < b ? a + "-" + b : b + "-" + a;
+  const kind = (a, b) => !genders ? "" : genders[a] !== genders[b] ? "mf" : genders[a];
+  const ok = (a, b) => !genders || sameSex || genders[a] !== genders[b];
+  const splits = [[0, 1, 2, 3], [0, 2, 1, 3], [0, 3, 1, 2]];
+  let best = null, bs = Infinity;
+  for (let t = 0; t < 60; t++) {
+    const count = new Array(n).fill(0), run = new Array(n).fill(0), used = {};
+    avoid.forEach(([a, b]) => { used[key(a, b)] = (used[key(a, b)] || 0) + 1; });
+    const slots = []; let made = 0, repeats = 0;
+    while (made < G) {
+      const slot = [], on = new Set();
+      while (slot.length < courts && made < G) {
+        const pool = shuffle([...Array(n).keys()].filter(p => !on.has(p)))
+          .sort((x, y) => count[x] - count[y] || run[y] - run[x]).slice(0, 12);
+        let pick = null, ps = Infinity;
+        for (let i = 0; i < pool.length; i++) for (let j = i + 1; j < pool.length; j++)
+          for (let k = j + 1; k < pool.length; k++) for (let l = k + 1; l < pool.length; l++) {
+            const q = [pool[i], pool[j], pool[k], pool[l]];
+            let base = Math.random() * 6;
+            q.forEach(p => base += 60 * count[p] - 12 * run[p]);
+            for (const sp of splits) {
+              const [w, x, y, z] = sp.map(m => q[m]);
+              if (!ok(w, x) || !ok(y, z) || kind(w, x) !== kind(y, z)) continue;
+              const sc = base + 40 * ((used[key(w, x)] || 0) + (used[key(y, z)] || 0));
+              if (sc < ps) { ps = sc; pick = [[Math.min(w, x), Math.max(w, x)], [Math.min(y, z), Math.max(y, z)]]; }
+            }
+          }
+        if (!pick) break;
+        slot.push(pick); made++;
+        pick.flat().forEach(p => { on.add(p); count[p]++; });
+        pick.forEach(([a, b]) => { if (used[key(a, b)]) repeats++; used[key(a, b)] = (used[key(a, b)] || 0) + 1; });
+      }
+      if (!slot.length) break;
+      slots.push(slot);
+      for (let p = 0; p < n; p++) { if (on.has(p)) run[p] = 0; else run[p]++; }
+    }
+    // all G games first, then the most even counts, then time, repeats, bench
+    const s = (G - made) * 1e10 + (Math.max(...count) - Math.min(...count)) * 1e8 + benchScore(slots, n) + repeats * 2e4;
+    if (s < bs) { bs = s; best = slots; }
+  }
+  best = [...best.filter(sl => sl.length === courts), ...best.filter(sl => sl.length < courts)];
+  return { rounds: best.flat(), slot: best.flatMap((sl, i) => sl.map(() => i)), extras: null, doubled: [] };
+}
+
 /* ============ state ============ */
 let T = null;
 let names = ["", "", "", ""];
@@ -344,23 +402,30 @@ const FORMATS = {
   mixed: { short: "Mixed", name: "Mixed only", desc: "Every game is boy &amp; girl v boy &amp; girl." },
   same: { short: "Mixed + same", name: "Mixed + same-sex", desc: "Boy &amp; girl v boy &amp; girl, two boys v two boys, two girls v two girls." }
 };
-let format = "any", showOpts = false, genders = names.map(() => "");
-let courts = 1;
+let format = "any", showOpts = null, genders = names.map(() => "");
+let courts = 1, points = 9;
+// a time limit isn't saved either: every visit starts with none
+let limit = 0;
+const LIMITS = [0, 30, 45, 60, 75, 90, 120, 150, 180];
+const LIMIT_SHORT = { 0: "None", 30: "30m", 45: "45m", 60: "1h", 75: "1&frac14;h", 90: "1&frac12;h", 120: "2h", 150: "2&frac12;h", 180: "3h" };
+const LIMIT_NAME = { 0: "No limit", 30: "30 min", 45: "45 min", 60: "1 hour", 75: "1&frac14; hours", 90: "1&frac12; hours", 120: "2 hours", 150: "2&frac12; hours", 180: "3 hours" };
 let view = "setup", tab = "rounds";
 let open = null, winner = null, winScore = 9;
+// the tournament's points to win; older saves were all first to 9
+const target = () => (T && T.target) || 9;
 let armed = null, armTimer = null;
 
 try { const s = localStorage.getItem(T_KEY); if (s) { T = JSON.parse(s); view = "play"; } } catch (e) { }
 try {
   const s = localStorage.getItem(N_KEY);
   if (s) {
-    const d = JSON.parse(s); names = d.names || names; priority = d.priority ?? 0; courts = d.courts || 1;
+    const d = JSON.parse(s); names = d.names || names; priority = d.priority ?? 0; courts = d.courts || 1; points = d.points || 9;
     genders =names.map((_, i) => (d.genders && d.genders[i]) || "");
   }
 } catch (e) { }
 
 const saveT = () => { try { T ? localStorage.setItem(T_KEY, JSON.stringify(T)) : localStorage.removeItem(T_KEY); } catch (e) { } };
-const saveN = () => { try { localStorage.setItem(N_KEY, JSON.stringify({ names, priority, genders, courts })); } catch (e) { } };
+const saveN = () => { try { localStorage.setItem(N_KEY, JSON.stringify({ names, priority, genders, courts, points })); } catch (e) { } };
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const app = document.getElementById("app");
 
@@ -370,11 +435,15 @@ function dupes() { const c = cleanNames().map(s => s.toLowerCase()); return c.le
 function setupIssue() {
   if (cleanNames().length < 4) return `Add at least <b>4</b> players.`;
   if (dupes()) return `Two players have the same name &mdash; give them something to tell them apart.`;
-  if (format === "any") return null;
-  const g = cleanGenders();
-  if (g.includes("")) return `Tap <b>?</b> next to each player to mark them as a boy or a girl.`;
-  if (g.filter(x => x === "m").length < 2 || g.filter(x => x === "f").length < 2)
-    return `${FORMATS[format].name} needs at least <b>2</b> boys and <b>2</b> girls.`;
+  if (format !== "any") {
+    const g = cleanGenders();
+    if (g.includes("")) return `Tap <b>?</b> next to each player to mark them as a boy or a girl.`;
+    if (g.filter(x => x === "m").length < 2 || g.filter(x => x === "f").length < 2)
+      return `${FORMATS[format].name} needs at least <b>2</b> boys and <b>2</b> girls.`;
+  }
+  const n = cleanNames().length;
+  if (needsCut(n) && !limitedPlan(n))
+    return `${LIMIT_NAME[limit]} isn't long enough for everyone to get a game. Try a longer time or fewer points.`;
   return null;
 }
 const andList = a => a.length < 2 ? a.join("") : a.slice(0, -1).join(", ") + " and " + a[a.length - 1];
@@ -424,7 +493,11 @@ function gamesEach() {
 const slotsOf = () => T.slot || T.rounds.map((_, i) => i);
 
 function addRound() {
-  const built = buildSchedule(T.players.length, T.star ?? null, T.genders || null, T.format === "same", T.courts || 1);
+  // a time-limited tournament adds another time-limited block, steering
+  // away from partnerships already played
+  const built = T.limitGames
+    ? buildLimited(T.players.length, T.genders || null, T.format === "same", T.courts || 1, T.limitGames, T.rounds.flat())
+    : buildSchedule(T.players.length, T.star ?? null, T.genders || null, T.format === "same", T.courts || 1);
   if (!built) return false;
   const slot = slotsOf();
   T.slot = slot.concat(built.slot.map(x => x + (slot.length ? slot[slot.length - 1] + 1 : 0)));
@@ -452,22 +525,33 @@ function renderSetup() {
   const bad = !!setupIssue();
 
   let h = `<div class="top"><div>
-      <div class="eyebrow">Padel &middot; first to 9</div>
+      <div class="eyebrow">Padel &middot; first to ${points}</div>
       <h1>Everyone<br>plays everyone</h1></div>
-      <button class="fmt" data-act="opts">${showOpts ? "Done" : `Format &middot; <b>${FORMATS[format].short}</b>`}</button></div>`;
+      <div class="topbtns">
+        <button class="fmt" data-act="opts" data-v="format">${showOpts === "format" ? "Done" : `Format &middot; <b>${FORMATS[format].short}</b>`}</button>
+        <button class="fmt" data-act="opts" data-v="time">${showOpts === "time" ? "Done" : `Time limit &middot; <b>${LIMIT_SHORT[limit]}</b>`}</button>
+      </div></div>`;
 
-  if (showOpts) {
+  if (showOpts === "format") {
     h += `<div class="opts">`;
     for (const k in FORMATS) h += `<button class="opt" data-on="${format === k ? 1 : 0}" data-act="format" data-v="${k}">
         <div class="nm">${FORMATS[k].name}</div><div class="sub">${FORMATS[k].desc}</div></button>`;
     h += `</div>`;
   }
+  if (showOpts === "time") {
+    h += `<div class="opts"><div class="tgrid">`;
+    for (const m of LIMITS) h += `<button class="opt" data-on="${limit === m ? 1 : 0}" data-act="limit" data-v="${m}">${LIMIT_NAME[m]}</button>`;
+    h += `</div><div class="hint" style="margin-top:4px">If everyone-with-everyone won't fit, everyone gets the same number of games instead. Allows about ${Math.round(minsPerGame(points))} min a game at first to ${points}.</div></div>`;
+  }
 
   if (T) h += `<button class="resume" data-act="resume">&larr; Back to the tournament in progress</button>`;
 
-  h += `<div class="courts"><span class="eyebrow">Courts</span>`;
+  h += `<div class="setrow"><span class="eyebrow">Courts</span>`;
   for (let c = 1; c <= 4; c++) h += `<button class="tab" data-on="${courts === c ? 1 : 0}" data-act="courts" data-v="${c}">${c}</button>`;
-  h += `</div>`;
+  h += `</div><div class="setrow"><span class="eyebrow">Points to win a match</span>
+      <button class="tab" data-act="pts" data-v="${points - 1}">&minus;</button>
+      <span class="pval">${points}</span>
+      <button class="tab" data-act="pts" data-v="${points + 1}">+</button></div>`;
 
   h += `<div class="eyebrow" style="margin-bottom:9px">Who's playing</div>`;
 
@@ -499,6 +583,7 @@ function summaryHTML() {
   const starRaw = names[priority] ? names[priority].trim() : "";
   const issue = setupIssue();
   if (issue) return issue;
+  if (needsCut(n)) return limitedSummaryHTML(n);
   if (format !== "any") return mixedSummaryHTML(clean, starRaw, format === "same");
   let h = `<b>${n}</b> players &middot; <b>${gamesN}</b> games &middot; ${timeHTML(n, gamesN)}<br>`;
   h += `every pair partners up exactly once`;
@@ -509,7 +594,7 @@ function summaryHTML() {
   } else {
     h += `<br>everyone plays <b>${n - 1}</b> games &mdash; no extras needed`;
   }
-  h += benchHTML(n);
+  h += fitHTML(n) + benchHTML(n);
   return h;
 }
 
@@ -542,7 +627,7 @@ function mixedSummaryHTML(clean, starRaw, sameSex) {
   if (boyGames === girlGames) h += `<br>everyone plays <b>${boyGames}</b> games${odd.length ? " before extras" : ""}`;
   else h += `<br>boys play <b>${boyGames}</b> games, girls play <b>${girlGames}</b>`;
   if (odd.length || boyGames !== girlGames) h += ` &mdash; only each player's best ${Math.min(boyGames, girlGames)} scores count`;
-  h += benchHTML(n);
+  h += fitHTML(n) + benchHTML(n);
   return h;
 }
 
@@ -551,8 +636,53 @@ const useCourts = n => Math.max(1, Math.min(courts, Math.floor(n / 4)));
 // a guide only: it assumes every slot fills every court
 const timeHTML = (n, gamesN) => {
   const c = useCourts(n);
-  return `roughly <b>${dur(Math.ceil(gamesN / c) * MINS_PER_GAME)}</b> on ${c === 1 ? "one court" : c + " courts"}`;
+  return `roughly <b>${dur(Math.round(Math.ceil(gamesN / c) * minsPerGame(points)))}</b> on ${c === 1 ? "one court" : c + " courts"}`;
 };
+
+// The full schedule's size for the chosen format, mirroring pairGroups() and
+// buildSchedule(): total games, and the most any one player plays.
+function fullCounts(n) {
+  if (format === "any") { const pairs = n * (n - 1) / 2; return { gamesN: Math.ceil(pairs / 2), maxPer: pairs % 2 ? n : n - 1 }; }
+  const g = cleanGenders(), m = g.filter(x => x === "m").length, f = n - m, same = format === "same";
+  const kinds = [same && m >= 4 ? m * (m - 1) / 2 : 0, same && f >= 4 ? f * (f - 1) / 2 : 0, m * f].filter(Boolean);
+  const boy = (same && m >= 4 ? m - 1 : 0) + f, girl = (same && f >= 4 ? f - 1 : 0) + m;
+  return { gamesN: kinds.reduce((t, k) => t + Math.ceil(k / 2), 0), maxPer: Math.max(boy, girl) + (kinds.some(k => k % 2) ? 1 : 0) };
+}
+// slots (one game per court each) the full schedule needs, and minutes for it
+const fullSlots = n => { const fc = fullCounts(n); return Math.max(Math.ceil(fc.gamesN / useCourts(n)), fc.maxPer); };
+const fullMins = n => fullSlots(n) * minsPerGame(points);
+const needsCut = n => n >= 4 && limit > 0 && fullMins(n) > limit;
+
+// With a time limit: the most games each (k) that fits, so that n*k/4 is a
+// whole number of games and everyone plays exactly k. If no k divides evenly,
+// fill the time instead and some play one fewer (best-N keeps it fair), as
+// long as everyone still gets a game.
+function limitedPlan(n) {
+  const S = Math.floor(limit / minsPerGame(points)), C = useCourts(n), top = Math.min(S, fullCounts(n).maxPer - 1);
+  for (let k = top; k >= 1; k--) if ((n * k) % 4 === 0 && n * k / 4 <= S * C) return { k, G: n * k / 4 };
+  const G = Math.min(S * C, Math.floor(n * top / 4));
+  return 4 * G >= n ? { k: Math.ceil(4 * G / n), G } : null;
+}
+
+// fewer points that would fit everyone-with-everyone into the time limit
+function fitPoints(n) {
+  const p = Math.floor(limit / fullSlots(n) / minsPerGame(1));
+  return p >= 5 && p < points ? p : null;
+}
+
+const fitHTML = n => limit ? `<br>fits in your ${LIMIT_NAME[limit]}` : "";
+
+function limitedSummaryHTML(n) {
+  const lp = limitedPlan(n), c = useCourts(n);
+  const even = format === "any" && lp.G * 4 === n * lp.k;
+  let h = `<b>${n}</b> players &middot; <b>${lp.G}</b> games &middot; fits in <b>${LIMIT_NAME[limit]}</b> on ${c === 1 ? "one court" : c + " courts"}<br>`;
+  h += even ? `everyone plays <b>${lp.k}</b> games` : `everyone plays about <b>${lp.k}</b> games, as even as the numbers allow &mdash; the table counts everyone's best scores so it stays fair`;
+  h += `<br>partners change every game, but not every pair gets to play together`;
+  h += `<br><span class="ball">Everyone with everyone would take about ${dur(Math.round(fullMins(n)))} at first to ${points}.</span>`;
+  const fp = fitPoints(n);
+  if (fp) h += `<button class="suggest" data-act="pts" data-v="${fp}">Play first to ${fp} instead, so everyone partners everyone</button>`;
+  return h + benchHTML(n);
+}
 const benchHTML = n => {
   const c = useCourts(n), off = n - 4 * c;
   let h = off > 2 || (c > 1 && off) ? `<br>${off} sit out each game${c === 1 ? " on a single court" : ""}` : "";
@@ -576,7 +706,7 @@ function renderPlay() {
   const liveSlot = nextUp >= 0 ? slot[nextUp] : -1;
 
   let h = `<div class="top"><div>
-      <div class="eyebrow">${T.players.length} players${T.format && T.format !== "any" ? " &middot; " + FORMATS[T.format].short.toLowerCase() : ""} &middot; first to 9</div>
+      <div class="eyebrow">${T.players.length} players${T.format && T.format !== "any" ? " &middot; " + FORMATS[T.format].short.toLowerCase() : ""} &middot; first to ${target()}${T.limitGames ? " &middot; time-limited" : ""}</div>
       <h1>Everyone<br>plays everyone</h1></div>
       <div class="prog"><b>${played}</b>/${total}<br>games</div></div>`;
 
@@ -717,8 +847,10 @@ app.addEventListener("click", e => {
   const act = b.dataset.act, v = b.dataset.v, i = +b.dataset.i;
 
   if (act === "star") { syncInputs(); priority = i; saveN(); render(); }
-  else if (act === "opts") { syncInputs(); showOpts = !showOpts; render(); }
-  else if (act === "format") { syncInputs(); format = v; showOpts = false; render(); }
+  else if (act === "opts") { syncInputs(); showOpts = showOpts === v ? null : v; render(); }
+  else if (act === "format") { syncInputs(); format = v; showOpts = null; render(); }
+  else if (act === "limit") { syncInputs(); limit = +v; showOpts = null; render(); }
+  else if (act === "pts") { syncInputs(); points = Math.max(3, Math.min(21, +v)); saveN(); render(); }
   else if (act === "courts") { syncInputs(); courts = +v; saveN(); render(); }
   else if (act === "sex") { syncInputs(); genders[i] = genders[i] === "m" ? "f" : "m"; saveN(); render(); }
   else if (act === "add") { syncInputs(); names.push(""); genders.push(""); saveN(); render(); app.querySelector(`.pin[data-i="${names.length - 1}"]`).focus(); }
@@ -736,14 +868,17 @@ app.addEventListener("click", e => {
     // priority index within the cleaned list
     const starRaw = names[priority] ? names[priority].trim() : "";
     const pIdx = starRaw ? clean.indexOf(starRaw) : -1;
-    const built = buildSchedule(clean.length, pIdx >= 0 ? pIdx : null,
-      format === "any" ? null : cleanGenders(), format === "same", useCourts(clean.length));
+    const lp = needsCut(clean.length) ? limitedPlan(clean.length) : null;
+    const built = lp
+      ? buildLimited(clean.length, format === "any" ? null : cleanGenders(), format === "same", useCourts(clean.length), lp.G)
+      : buildSchedule(clean.length, pIdx >= 0 ? pIdx : null,
+          format === "any" ? null : cleanGenders(), format === "same", useCourts(clean.length));
     if (!built) { alert("Couldn't build a schedule for that many players. Try adding or removing one."); return; }
     const gp = new Array(clean.length).fill(0);
     built.rounds.forEach(g => [...g[0], ...g[1]].forEach(p => gp[p]++));
     T = { players: clean, rounds: built.rounds, extras: built.extras, results: {}, countBest: Math.min(...gp), format,
           genders: format === "any" ? null : cleanGenders(), star: pIdx >= 0 ? pIdx : null, starts: [0], final: null,
-          courts: useCourts(clean.length), slot: built.slot };
+          courts: useCourts(clean.length), slot: built.slot, target: points, limitGames: lp ? lp.G : null };
     saveT(); saveN();
     view = "play"; tab = "rounds"; open = null; winner = null; armed = null;
     render(); window.scrollTo(0, 0);
@@ -751,10 +886,10 @@ app.addEventListener("click", e => {
   else if (act === "resume") { view = "play"; render(); window.scrollTo(0, 0); }
   else if (act === "setup") { syncInputs(); view = "setup"; armed = null; render(); window.scrollTo(0, 0); }
   else if (act === "tab") { tab = v; open = null; winner = null; render(); }
-  else if (act === "edit") { open = v === "final" ? v : +v; winner = null; winScore = 9; render(); }
+  else if (act === "edit") { open = v === "final" ? v : +v; winner = null; winScore = target(); render(); }
   else if (act === "side") {
     const idx = v === "final" ? v : +v;
-    if (open !== idx) { open = idx; winner = null; winScore = 9; }
+    if (open !== idx) { open = idx; winner = null; winScore = target(); }
     else if (!winner) winner = b.dataset.side;
     render();
   }
@@ -762,7 +897,7 @@ app.addEventListener("click", e => {
     const loser = +v;
     const s = winner === "a" ? { a: winScore, b: loser } : { a: loser, b: winScore };
     if (open === "final") T.final.result = s; else T.results[open] = s;
-    saveT(); open = null; winner = null; winScore = 9; render();
+    saveT(); open = null; winner = null; winScore = target(); render();
   }
   else if (act === "final") { T.final = pickFinal(); saveT(); open = null; winner = null; render(); }
   else if (act === "again") {
@@ -777,7 +912,7 @@ app.addEventListener("click", e => {
     render();
   }
   else if (act === "up") { winScore = Math.min(21, winScore + 1); render(); }
-  else if (act === "dn") { winScore = Math.max(9, winScore - 1); render(); }
+  else if (act === "dn") { winScore = Math.max(target(), winScore - 1); render(); }
   else if (act === "clear") {
     clearTimeout(armTimer);
     if (armed === "clear") { T.results = {}; T.final = null; saveT(); armed = null; open = null; }
