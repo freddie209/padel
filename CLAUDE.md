@@ -18,8 +18,8 @@ test.js       node test harness — runs the real code out of index.html
 
 State lives in two `localStorage` keys, both per-device:
 
-- `padel-tournament-v2` — the live tournament `{players, rounds, extras, results, countBest}`
-- `padel-names-v2` — the last player list and starred index, so setup is prefilled next time
+- `padel-tournament-v2` — the live tournament `{players, rounds, extras, results, countBest, format, genders, star, starts, final}` (the last five are optional, so older saves still load)
+- `padel-names-v2` — the last player list, starred index and genders, so setup is prefilled next time
 
 There is no sync. One person scores. If the shape of the stored object ever
 changes, bump the key suffix rather than migrating.
@@ -49,6 +49,34 @@ build.
 - `orderOnce()` sequences the games to spread the bench, scored 300 times and
   the best kept — the cost is quadratic in consecutive benched games, so nobody
   sits out twice running when it can be avoided
+
+**Formats** (the `Format` button at the top of setup; `FORMATS` in the script).
+Default is `any` — anyone with anyone, gender ignored. The format is not saved,
+so every visit starts on `any`. The other two show a Boy/Girl button per player
+(genders *are* saved) and need at least two of each:
+- `mixed` — only boy+girl pairs, so every game is boy+girl v boy+girl. Every
+  boy partners every girl once; same-sex pairs never play.
+- `same` — a game is always two pairs of the same kind: boy+girl v boy+girl,
+  boy+boy v boy+boy, girl+girl v girl+girl. Never mixed against same-sex.
+
+`pairGroups(n, genders, sameSex)` splits the pairs into kinds and
+`buildSchedule` matches each kind on its own, so each odd-sized kind gets its
+own doubled pair (up to three; never two extras for one player, starred player
+first if they're in that kind). A same-sex kind needs four of that sex, so
+with two or three boys (or girls) those pairs are left out. Game counts can
+differ by sex in both formats; best-N absorbs it. `mixedSummaryHTML()` mirrors
+`pairGroups()` — keep them in step.
+
+**Another round** (`addRound()`, button at the bottom of Rounds, tap twice):
+builds the same format afresh and appends it, recording where it starts in
+`T.starts`, so everyone's count rises together and best-N stays fair.
+`countBest` is recomputed. `T.star` and `T.genders` are kept on the
+tournament so it can rebuild.
+
+**Final** (`pickFinal()`, offered once every game has a score): optional, just
+for fun, stored in `T.final` and never counted in the table. Anyone: 1st + 4th
+v 2nd + 3rd. Mixed formats: top boy + 2nd girl v 2nd boy + top girl. Adding a
+round or clearing scores removes it.
 
 **2. Ranking is best-N totals, not averages.** `countBest` is the number of
 games *most* players get (`min` of games played). Every player is ranked on the

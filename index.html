@@ -49,6 +49,17 @@ h1{font-size:26px;font-weight:800;letter-spacing:-.035em;line-height:.95;margin:
 .star{width:40px;height:44px;border-radius:9px;background:var(--court);flex:none;
   font-size:15px;color:var(--mute);line-height:1;transition:.16s;}
 .star[data-on="1"]{background:var(--ball);color:var(--deep);}
+.fmt{flex:none;min-height:38px;padding:0 12px;border-radius:9px;font-family:'DM Mono',monospace;
+  font-size:11px;color:var(--mute);box-shadow:inset 0 0 0 1px var(--hair);}
+.fmt b{color:var(--line);font-weight:500;}
+.opts{display:flex;flex-direction:column;gap:6px;margin:-4px 0 16px;}
+.opt{text-align:left;padding:11px 13px;border-radius:9px;background:var(--court);}
+.opt[data-on="1"]{background:var(--line);color:var(--deep);}
+.opt .nm{font-size:14px;}
+.opt .sub{color:inherit;opacity:.7;}
+.sex{width:54px;height:44px;border-radius:9px;background:var(--tile);flex:none;
+  font-size:13px;font-weight:600;transition:.16s;}
+.sex[data-g=""]{background:none;color:var(--mute);box-shadow:inset 0 0 0 1px var(--hair);}
 .pin{flex:1;min-width:0;height:44px;border-radius:9px;background:var(--court);border:none;
   color:var(--line);font-family:inherit;font-size:15px;font-weight:600;padding:0 13px;
   letter-spacing:-.01em;}
@@ -116,6 +127,10 @@ h1{font-size:26px;font-weight:800;letter-spacing:-.035em;line-height:.95;margin:
 
 .empty{padding:26px 14px;text-align:center;color:var(--mute);font-size:13px;line-height:1.55;}
 .note{margin-top:14px;font-family:'DM Mono',monospace;font-size:10.5px;color:var(--mute);line-height:1.65;}
+.more{width:100%;margin-top:14px;padding:13px;border-radius:11px;font-size:13px;font-weight:600;
+  box-shadow:inset 0 0 0 1px var(--hair);color:var(--line);}
+.more[data-armed="1"]{background:var(--ball);color:var(--deep);box-shadow:none;}
+.champ{color:var(--ball);}
 .foot{display:flex;gap:6px;margin-top:20px;}
 .foot button{flex:1;padding:11px;border-radius:9px;font-size:12px;
   font-family:'DM Mono',monospace;color:var(--mute);box-shadow:inset 0 0 0 1px var(--hair);}
@@ -193,30 +208,56 @@ function benchScore(rounds, n) {
   return worst * 1000 + total;
 }
 
-function buildSchedule(n, priority) {
-  const pairs = allPairs(n);
-  let extras = null;
-  if (pairs.length % 2 === 1) {
-    const a = (priority != null && priority >= 0 && priority < n) ? priority : Math.floor(Math.random() * n);
-    const others = [...Array(n).keys()].filter(x => x !== a);
-    const b = others[Math.floor(Math.random() * others.length)];
-    pairs.push([Math.min(a, b), Math.max(a, b)]);
-    extras = [a, b];
+// Mixed: a game is two pairs of the same kind (boy+girl, boy+boy or girl+girl),
+// so each kind is matched on its own. Mixed only keeps just boy+girl. With
+// same-sex on, a same-sex kind needs four of that sex to make a game; with two
+// or three those pairs can never be played and are left out.
+function pairGroups(n, genders, sameSex) {
+  if (!genders) return [allPairs(n)];
+  const g = { mm: [], ff: [], mf: [] };
+  allPairs(n).forEach(([a, b]) => g[genders[a] !== genders[b] ? "mf" : genders[a] === "m" ? "mm" : "ff"].push([a, b]));
+  if (!sameSex) return [g.mf];
+  return [g.mm.length >= 6 ? g.mm : [], g.ff.length >= 6 ? g.ff : [], g.mf].filter(ps => ps.length);
+}
+
+function buildSchedule(n, priority, genders, sameSex) {
+  const star = (priority != null && priority >= 0 && priority < n) ? priority : null;
+  const extras = [], doubled = [];
+  const games = [];
+  for (const pairs of pairGroups(n, genders, sameSex)) {
+    // an odd number of pairs means one pair plays together twice: the starred
+    // player if they're in this kind, and never someone who already has an extra
+    if (pairs.length % 2 === 1) {
+      const free = pairs.filter(p => !extras.includes(p[0]) && !extras.includes(p[1]));
+      const withStar = star != null && !extras.includes(star) ? free.filter(p => p.includes(star)) : [];
+      const from = withStar.length ? withStar : free;
+      const d = from[Math.floor(Math.random() * from.length)];
+      const pick = d.includes(star) ? [star, d[0] === star ? d[1] : d[0]] : d;
+      pairs.push(d); doubled.push(d); extras.push(...pick);
+    }
+    const g = matchPairs(pairs);
+    if (!g) return null;
+    games.push(...g);
   }
-  const games = matchPairs(pairs);
-  if (!games) return null;
   let best = null, bs = Infinity;
   for (let i = 0; i < 300; i++) {
     const o = orderOnce(games, n); const s = benchScore(o, n);
     if (s < bs) { bs = s; best = o; }
   }
-  return { rounds: best, extras };
+  return { rounds: best, extras: extras.length ? extras : null, doubled };
 }
 
 /* ============ state ============ */
 let T = null;
 let names = ["", "", "", ""];
 let priority = 0;
+// format isn't saved: every new visit starts on "any" unless you change it
+const FORMATS = {
+  any: { short: "Anyone", name: "Anyone with anyone", desc: "Boy or girl doesn't matter. The default." },
+  mixed: { short: "Mixed", name: "Mixed only", desc: "Every game is boy &amp; girl v boy &amp; girl." },
+  same: { short: "Mixed + same", name: "Mixed + same-sex", desc: "Boy &amp; girl v boy &amp; girl, two boys v two boys, two girls v two girls." }
+};
+let format = "any", showOpts = false, genders = names.map(() => "");
 let view = "setup", tab = "rounds";
 let open = null, winner = null, winScore = 9;
 let armed = null, armTimer = null;
@@ -224,16 +265,31 @@ let armed = null, armTimer = null;
 try { const s = localStorage.getItem(T_KEY); if (s) { T = JSON.parse(s); view = "play"; } } catch (e) { }
 try {
   const s = localStorage.getItem(N_KEY);
-  if (s) { const d = JSON.parse(s); names = d.names || names; priority = d.priority ?? 0; }
+  if (s) {
+    const d = JSON.parse(s); names = d.names || names; priority = d.priority ?? 0;
+    genders =names.map((_, i) => (d.genders && d.genders[i]) || "");
+  }
 } catch (e) { }
 
 const saveT = () => { try { T ? localStorage.setItem(T_KEY, JSON.stringify(T)) : localStorage.removeItem(T_KEY); } catch (e) { } };
-const saveN = () => { try { localStorage.setItem(N_KEY, JSON.stringify({ names, priority })); } catch (e) { } };
+const saveN = () => { try { localStorage.setItem(N_KEY, JSON.stringify({ names, priority, genders })); } catch (e) { } };
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const app = document.getElementById("app");
 
 function cleanNames() { return names.map(s => s.trim()).filter(Boolean); }
+function cleanGenders() { return genders.filter((_, i) => names[i].trim()); }
 function dupes() { const c = cleanNames().map(s => s.toLowerCase()); return c.length !== new Set(c).size; }
+function setupIssue() {
+  if (cleanNames().length < 4) return `Add at least <b>4</b> players.`;
+  if (dupes()) return `Two players have the same name &mdash; give them something to tell them apart.`;
+  if (format === "any") return null;
+  const g = cleanGenders();
+  if (g.includes("")) return `Tap <b>?</b> next to each player to mark them as a boy or a girl.`;
+  if (g.filter(x => x === "m").length < 2 || g.filter(x => x === "f").length < 2)
+    return `${FORMATS[format].name} needs at least <b>2</b> boys and <b>2</b> girls.`;
+  return null;
+}
+const andList = a => a.length < 2 ? a.join("") : a.slice(0, -1).join(", ") + " and " + a[a.length - 1];
 function syncInputs() {
   app.querySelectorAll(".pin").forEach(el => { names[+el.dataset.i] = el.value; });
 }
@@ -268,13 +324,51 @@ function standings() {
   }).sort((x, y) => y.total - x.total || y.wins - x.wins || x.name.localeCompare(y.name));
 }
 
+function gamesEach() {
+  const gp = new Array(T.players.length).fill(0);
+  T.rounds.forEach(g => [...g[0], ...g[1]].forEach(p => gp[p]++));
+  return gp;
+}
+
+// Another full round: the same format built afresh and added to the end, so
+// everyone's game count goes up by the same amount and best-N stays fair
+function addRound() {
+  const built = buildSchedule(T.players.length, T.star ?? null, T.genders || null, T.format === "same");
+  if (!built) return false;
+  T.starts = [...(T.starts || [0]), T.rounds.length];
+  T.rounds = T.rounds.concat(built.rounds);
+  if (built.extras) T.extras = [...new Set([...(T.extras || []), ...built.extras])];
+  T.countBest = Math.min(...gamesEach());
+  T.final = null;
+  return true;
+}
+
+// Top four off the table. Mixed formats take the top two boys and top two
+// girls and split them 1st boy + 2nd girl v 2nd boy + 1st girl; otherwise 1st + 4th v 2nd + 3rd.
+function pickFinal() {
+  const t = standings().map(r => r.p);
+  if (T.genders) {
+    const b = t.filter(p => T.genders[p] === "m"), g = t.filter(p => T.genders[p] === "f");
+    return { a: [b[0], g[1]], b: [b[1], g[0]], result: null };
+  }
+  return { a: [t[0], t[3]], b: [t[1], t[2]], result: null };
+}
+
 /* ============ render ============ */
 function renderSetup() {
-  const bad = cleanNames().length < 4 || dupes();
+  const bad = !!setupIssue();
 
   let h = `<div class="top"><div>
       <div class="eyebrow">Padel &middot; first to 9</div>
-      <h1>Everyone<br>plays everyone</h1></div></div>`;
+      <h1>Everyone<br>plays everyone</h1></div>
+      <button class="fmt" data-act="opts">${showOpts ? "Done" : `Format &middot; <b>${FORMATS[format].short}</b>`}</button></div>`;
+
+  if (showOpts) {
+    h += `<div class="opts">`;
+    for (const k in FORMATS) h += `<button class="opt" data-on="${format === k ? 1 : 0}" data-act="format" data-v="${k}">
+        <div class="nm">${FORMATS[k].name}</div><div class="sub">${FORMATS[k].desc}</div></button>`;
+    h += `</div>`;
+  }
 
   if (T) h += `<button class="resume" data-act="resume">&larr; Back to the tournament in progress</button>`;
 
@@ -282,7 +376,9 @@ function renderSetup() {
 
   names.forEach((v, i) => {
     h += `<div class="prow">
-      <button class="star" data-on="${priority === i ? 1 : 0}" data-act="star" data-i="${i}" title="Gets the extra game">&#9733;</button>
+      <button class="star" data-on="${priority === i ? 1 : 0}" data-act="star" data-i="${i}" title="Gets the extra game">&#9733;</button>`;
+    if (format !== "any") h += `<button class="sex" data-g="${genders[i]}" data-act="sex" data-i="${i}">${{ m: "Boy", f: "Girl" }[genders[i]] || "?"}</button>`;
+    h += `
       <input class="pin" data-i="${i}" value="${esc(v)}" placeholder="Player ${i + 1}"
              autocomplete="off" autocapitalize="words" spellcheck="false" enterkeyhint="next">
       <button class="del" data-act="del" data-i="${i}">&times;</button>
@@ -304,8 +400,9 @@ function summaryHTML() {
   const pairs = n >= 2 ? n * (n - 1) / 2 : 0;
   const gamesN = pairs % 2 ? (pairs + 1) / 2 : pairs / 2;
   const starRaw = names[priority] ? names[priority].trim() : "";
-  if (n < 4) return `Add at least <b>4</b> players.`;
-  if (dupes()) return `Two players have the same name &mdash; give them something to tell them apart.`;
+  const issue = setupIssue();
+  if (issue) return issue;
+  if (format !== "any") return mixedSummaryHTML(clean, starRaw, format === "same");
   let h = `<b>${n}</b> players &middot; <b>${gamesN}</b> games &middot; roughly <b>${dur(gamesN * MINS_PER_GAME)}</b> on one court<br>`;
   h += `every pair partners up exactly once`;
   if (pairs % 2 === 1) {
@@ -319,11 +416,44 @@ function summaryHTML() {
   return h;
 }
 
+// Mirrors pairGroups() so the counts here match what buildSchedule() makes
+function mixedSummaryHTML(clean, starRaw, sameSex) {
+  const n = clean.length, g = cleanGenders();
+  const m = g.filter(x => x === "m").length, f = n - m;
+  const kinds = [
+    { label: "boy&ndash;boy", sex: "m", pairs: m * (m - 1) / 2, on: sameSex && m >= 4 },
+    { label: "girl&ndash;girl", sex: "f", pairs: f * (f - 1) / 2, on: sameSex && f >= 4 },
+    { label: "boy&ndash;girl", sex: null, pairs: m * f, on: true }
+  ].filter(k => k.on && k.pairs);
+  const gamesN = kinds.reduce((s, k) => s + Math.ceil(k.pairs / 2), 0);
+  const boyGames = (sameSex && m >= 4 ? m - 1 : 0) + f, girlGames = (sameSex && f >= 4 ? f - 1 : 0) + m;
+
+  let h = `<b>${n}</b> players (${m} boys, ${f} girls) &middot; <b>${gamesN}</b> games &middot; roughly <b>${dur(gamesN * MINS_PER_GAME)}</b> on one court<br>`;
+  const left = [m < 4 && `${m} boys`, f < 4 && `${f} girls`].filter(Boolean);
+  if (!sameSex) h += `every boy partners every girl once, always boy &amp; girl v boy &amp; girl`;
+  else if (left.length) h += `with only ${andList(left)} there aren't four for a same-sex game, so they only partner the other sex`;
+  else h += `every pair partners up exactly once`;
+
+  const odd = kinds.filter(k => k.pairs % 2);
+  if (odd.length) {
+    const ci = clean.indexOf(starRaw), starSex = ci >= 0 ? g[ci] : null;
+    const starIn = starSex && odd.some(k => k.sex === null || k.sex === starSex);
+    h += `<br><span class="ball">${andList(odd.map(k => `${k.pairs} ${k.label}`))} pairings ${odd.length > 1 ? "are odd numbers" : "is an odd number"}, `
+       + `so ${odd.length > 1 ? odd.length + " pairs play" : "one pair plays"} together twice and ${odd.length * 2} players get an extra game`
+       + `${starIn ? `, including ${esc(starRaw)}` : ""}.</span>`;
+  }
+  if (boyGames === girlGames) h += `<br>everyone plays <b>${boyGames}</b> games${odd.length ? " before extras" : ""}`;
+  else h += `<br>boys play <b>${boyGames}</b> games, girls play <b>${girlGames}</b>`;
+  if (odd.length || boyGames !== girlGames) h += ` &mdash; only each player's best ${Math.min(boyGames, girlGames)} scores count`;
+  if (n > 6) h += `<br>${n - 4} sit out each game on a single court`;
+  return h;
+}
+
 function refreshSummary() {
   const sum = document.getElementById("sum"), go = document.getElementById("go");
   if (!sum || !go) return;
   sum.innerHTML = summaryHTML();
-  go.disabled = cleanNames().length < 4 || dupes();
+  go.disabled = !!setupIssue();
 }
 
 function renderPlay() {
@@ -333,7 +463,7 @@ function renderPlay() {
   const nextUp = T.rounds.findIndex((_, i) => !T.results[i]);
 
   let h = `<div class="top"><div>
-      <div class="eyebrow">${T.players.length} players &middot; first to 9</div>
+      <div class="eyebrow">${T.players.length} players${T.format && T.format !== "any" ? " &middot; " + FORMATS[T.format].short.toLowerCase() : ""} &middot; first to 9</div>
       <h1>Everyone<br>plays everyone</h1></div>
       <div class="prog"><b>${played}</b>/${total}<br>games</div></div>`;
 
@@ -341,41 +471,77 @@ function renderPlay() {
       <button class="tab" data-on="${tab === "rounds" ? 1 : 0}" data-act="tab" data-v="rounds">Rounds</button>
       <button class="tab" data-on="${tab === "table" ? 1 : 0}" data-act="tab" data-v="table">Table</button></div>`;
 
+  // the two sides, plus the tap-the-winner / loser's-score steps when open.
+  // `key` is the game index, or "final" for the top-four final.
+  const matchHTML = (key, g, s) => {
+    const isOpen = open === key;
+    let m = "";
+    [["a", g[0]], ["b", g[1]]].forEach(([side, pr], i) => {
+      if (i === 1) m += `<div class="net"><span></span><i>v</i><span></span></div>`;
+      m += `<button class="side"
+              data-pick="${isOpen && winner === side ? 1 : 0}"
+              data-lost="${isOpen && winner && winner !== side ? 1 : 0}"
+              data-act="side" data-v="${key}" data-side="${side}">
+              <span class="names">${esc(nm(pr[0]))} &amp; ${esc(nm(pr[1]))}</span>`;
+      if (s && !isOpen) m += `<span class="pts">${side === "a" ? s.a : s.b}</span>`;
+      m += `</button>`;
+    });
+    return m;
+  };
+  const askHTML = key => {
+    if (open !== key) return "";
+    if (!winner) return `<div class="ask"><div class="eyebrow">Tap the pair that won</div></div>`;
+    let m = `<div class="ask"><div class="eyebrow">How many did the losers get?</div><div class="chips">`;
+    for (let v = 0; v < winScore; v++) m += `<button class="chip" data-act="score" data-v="${v}">${v}</button>`;
+    return m + `</div><div class="winline"><span>winners scored</span>
+            <button class="step" data-act="dn">&minus;</button>
+            <span class="winval">${winScore}</span>
+            <button class="step" data-act="up">+</button></div></div>`;
+  };
+
   if (tab === "rounds") {
+    const starts = T.starts || [0];
     T.rounds.forEach((g, idx) => {
       const s = T.results[idx], isOpen = open === idx, isLive = !s && nextUp === idx;
       const on = new Set([...g[0], ...g[1]]);
       const bench = T.players.map((_, i) => i).filter(i => !on.has(i));
 
+      const r = starts.indexOf(idx);
+      if (starts.length > 1 && r >= 0)
+        h += `<div class="eyebrow" style="margin:${r ? 20 : 0}px 0 9px">Round ${r + 1}${r ? " &middot; everyone again" : ""}</div>`;
+
       h += `<div class="card" data-live="${isLive ? 1 : 0}" data-done="${s && !isOpen ? 1 : 0}">
         <div class="chead"><div class="eyebrow">${isLive ? "On court &middot; game " + (idx + 1) : "Game " + (idx + 1)}</div>`;
       if (s && !isOpen) h += `<button class="final" data-act="edit" data-v="${idx}">${s.a}&ndash;${s.b} &middot; change</button>`;
       h += `</div>`;
-
-      [["a", g[0]], ["b", g[1]]].forEach(([side, pr], i) => {
-        if (i === 1) h += `<div class="net"><span></span><i>v</i><span></span></div>`;
-        h += `<button class="side"
-                data-pick="${isOpen && winner === side ? 1 : 0}"
-                data-lost="${isOpen && winner && winner !== side ? 1 : 0}"
-                data-act="side" data-v="${idx}" data-side="${side}">
-                <span class="names">${esc(nm(pr[0]))} &amp; ${esc(nm(pr[1]))}</span>`;
-        if (s && !isOpen) h += `<span class="pts">${side === "a" ? s.a : s.b}</span>`;
-        h += `</button>`;
-      });
-
+      h += matchHTML(idx, g, s);
       if (bench.length) h += `<div class="bench">bench &middot; ${bench.map(i => esc(nm(i))).join(", ")}</div>`;
-
-      if (isOpen && !winner) h += `<div class="ask"><div class="eyebrow">Tap the pair that won</div></div>`;
-      if (isOpen && winner) {
-        h += `<div class="ask"><div class="eyebrow">How many did the losers get?</div><div class="chips">`;
-        for (let v = 0; v < winScore; v++) h += `<button class="chip" data-act="score" data-v="${v}">${v}</button>`;
-        h += `</div><div class="winline"><span>winners scored</span>
-              <button class="step" data-act="dn">&minus;</button>
-              <span class="winval">${winScore}</span>
-              <button class="step" data-act="up">+</button></div></div>`;
-      }
-      h += `</div>`;
+      h += askHTML(idx) + `</div>`;
     });
+
+    // the final is optional, for fun, and never touches the table
+    const F = T.final;
+    if (F) {
+      const s = F.result, isOpen = open === "final";
+      h += `<div class="eyebrow" style="margin:20px 0 9px">Final &middot; just for fun</div>
+        <div class="card" data-live="${!s ? 1 : 0}">
+        <div class="chead"><div class="eyebrow">${T.genders ? "Top two boys &amp; top two girls" : "Top four"}</div>`;
+      if (s && !isOpen) h += `<button class="final" data-act="edit" data-v="final">${s.a}&ndash;${s.b} &middot; change</button>`;
+      h += `</div>` + matchHTML("final", [F.a, F.b], s);
+      if (s && !isOpen) {
+        const w = s.a > s.b ? F.a : F.b;
+        h += `<div class="bench champ">champions &middot; ${esc(nm(w[0]))} &amp; ${esc(nm(w[1]))}</div>`;
+      }
+      h += askHTML("final") + `</div>`;
+    } else if (total && played === total) {
+      h += `<button class="more" data-act="final">Play a final &middot; ${T.genders ? "top two boys &amp; top two girls" : "top four"}</button>
+        <div class="hint">Optional, just for fun &mdash; it doesn't change the table.</div>`;
+    }
+
+    const again = starts.length > 1 ? starts[1] : total;
+    h +=`<button class="more" data-act="again" data-armed="${armed === "again" ? 1 : 0}">${armed === "again"
+      ? `Tap again to add ${again} games` : "+ Add another round"}</button>
+      <div class="hint">Everyone plays everyone again, so the totals stay fair.${F ? " Adding one clears the final." : ""}</div>`;
   } else {
     if (played === 0) {
       h += `<div class="empty">No scores yet.<br>Play game 1, then tap the pair that won.</div>`;
@@ -388,10 +554,15 @@ function renderPlay() {
             <div class="who"><div class="nm">${esc(r.name)}</div><div class="sub">${sub}</div></div>
             <span class="avg">${r.total}</span></div>`;
       });
-      if (T.extras) {
+      const gp = gamesEach();
+      const more = T.players.filter((_, p) => gp[p] > T.countBest).map(esc);
+      if (more.length === 2 && Math.max(...gp) === T.countBest + 1) {
         h += `<div class="note">Totals are each player's best ${T.countBest} games.
-          ${esc(T.players[T.extras[0]])} and ${esc(T.players[T.extras[1]])} play one game more,
+          ${more[0]} and ${more[1]} play one game more,
           so once they've played ${T.countBest + 1} their lowest score drops out.</div>`;
+      } else if (more.length) {
+        h += `<div class="note">Totals are each player's best ${T.countBest} games.
+          ${andList(more)} play more than that, so their lowest scores drop out.</div>`;
       } else {
         h += `<div class="note">Everyone plays ${T.countBest} games, so totals are straight sums.</div>`;
       }
@@ -420,7 +591,7 @@ app.addEventListener("keydown", e => {
   const i = +e.target.dataset.i;
   const next = app.querySelector(`.pin[data-i="${i + 1}"]`);
   if (next) next.focus();
-  else { syncInputs(); names.push(""); saveN(); render(); app.querySelector(`.pin[data-i="${names.length - 1}"]`).focus(); }
+  else { syncInputs(); names.push(""); genders.push(""); saveN(); render(); app.querySelector(`.pin[data-i="${names.length - 1}"]`).focus(); }
 });
 
 app.addEventListener("click", e => {
@@ -428,26 +599,31 @@ app.addEventListener("click", e => {
   const act = b.dataset.act, v = b.dataset.v, i = +b.dataset.i;
 
   if (act === "star") { syncInputs(); priority = i; saveN(); render(); }
-  else if (act === "add") { syncInputs(); names.push(""); saveN(); render(); app.querySelector(`.pin[data-i="${names.length - 1}"]`).focus(); }
+  else if (act === "opts") { syncInputs(); showOpts = !showOpts; render(); }
+  else if (act === "format") { syncInputs(); format = v; showOpts = false; render(); }
+  else if (act === "sex") { syncInputs(); genders[i] = genders[i] === "m" ? "f" : "m"; saveN(); render(); }
+  else if (act === "add") { syncInputs(); names.push(""); genders.push(""); saveN(); render(); app.querySelector(`.pin[data-i="${names.length - 1}"]`).focus(); }
   else if (act === "del") {
     syncInputs();
     if (names.length <= 1) return;
-    names.splice(i, 1);
+    names.splice(i, 1); genders.splice(i, 1);
     if (priority === i) priority = 0; else if (priority > i) priority--;
     saveN(); render();
   }
   else if (act === "create") {
     syncInputs();
     const clean = cleanNames();
-    if (clean.length < 4 || dupes()) return;
+    if (setupIssue()) return;
     // priority index within the cleaned list
     const starRaw = names[priority] ? names[priority].trim() : "";
     const pIdx = starRaw ? clean.indexOf(starRaw) : -1;
-    const built = buildSchedule(clean.length, pIdx >= 0 ? pIdx : null);
+    const built = buildSchedule(clean.length, pIdx >= 0 ? pIdx : null,
+      format === "any" ? null : cleanGenders(), format === "same");
     if (!built) { alert("Couldn't build a schedule for that many players. Try adding or removing one."); return; }
     const gp = new Array(clean.length).fill(0);
     built.rounds.forEach(g => [...g[0], ...g[1]].forEach(p => gp[p]++));
-    T = { players: clean, rounds: built.rounds, extras: built.extras, results: {}, countBest: Math.min(...gp) };
+    T = { players: clean, rounds: built.rounds, extras: built.extras, results: {}, countBest: Math.min(...gp), format,
+          genders: format === "any" ? null : cleanGenders(), star: pIdx >= 0 ? pIdx : null, starts: [0], final: null };
     saveT(); saveN();
     view = "play"; tab = "rounds"; open = null; winner = null; armed = null;
     render(); window.scrollTo(0, 0);
@@ -455,23 +631,36 @@ app.addEventListener("click", e => {
   else if (act === "resume") { view = "play"; render(); window.scrollTo(0, 0); }
   else if (act === "setup") { syncInputs(); view = "setup"; armed = null; render(); window.scrollTo(0, 0); }
   else if (act === "tab") { tab = v; open = null; winner = null; render(); }
-  else if (act === "edit") { open = +v; winner = null; winScore = 9; render(); }
+  else if (act === "edit") { open = v === "final" ? v : +v; winner = null; winScore = 9; render(); }
   else if (act === "side") {
-    const idx = +v;
+    const idx = v === "final" ? v : +v;
     if (open !== idx) { open = idx; winner = null; winScore = 9; }
     else if (!winner) winner = b.dataset.side;
     render();
   }
   else if (act === "score") {
     const loser = +v;
-    T.results[open] = winner === "a" ? { a: winScore, b: loser } : { a: loser, b: winScore };
+    const s = winner === "a" ? { a: winScore, b: loser } : { a: loser, b: winScore };
+    if (open === "final") T.final.result = s; else T.results[open] = s;
     saveT(); open = null; winner = null; winScore = 9; render();
+  }
+  else if (act === "final") { T.final = pickFinal(); saveT(); open = null; winner = null; render(); }
+  else if (act === "again") {
+    clearTimeout(armTimer);
+    if (armed === "again") {
+      armed = null;
+      if (!addRound()) { alert("Couldn't build another round. Try again."); return; }
+      if (open === "final") { open = null; winner = null; }
+      saveT();
+    }
+    else { armed = "again"; armTimer = setTimeout(() => { armed = null; render(); }, 3000); }
+    render();
   }
   else if (act === "up") { winScore = Math.min(21, winScore + 1); render(); }
   else if (act === "dn") { winScore = Math.max(9, winScore - 1); render(); }
   else if (act === "clear") {
     clearTimeout(armTimer);
-    if (armed === "clear") { T.results = {}; saveT(); armed = null; open = null; }
+    if (armed === "clear") { T.results = {}; T.final = null; saveT(); armed = null; open = null; }
     else { armed = "clear"; armTimer = setTimeout(() => { armed = null; render(); }, 3000); }
     render();
   }

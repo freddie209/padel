@@ -112,6 +112,52 @@ for (let n = 4; n <= 14; n++) {
               `best-${lo} counts  max bench run ${worstRun}  extra game: ${extraNames}`);
 }
 
+/* ---------- 1b. mixed: games are always like against like ---------- */
+const kind = (p, sx) => sx[p[0]] !== sx[p[1]] ? "mf" : sx[p[0]] + sx[p[0]];
+for (const sameSex of [false, true]) {
+console.log(`\n${sameSex ? "Mixed + same-sex" : "Mixed only"} (2-8 boys x 2-8 girls, genders shuffled, index 0 starred)\n`);
+for (let m = 2; m <= 8; m++) for (let f = 2; f <= 8; f++) {
+  const n = m + f, tag = `${sameSex ? "same" : "mixed"} ${m}b+${f}g`;
+  for (let rep = 0; rep < 3; rep++) {
+    const sx = [...Array(m).fill("m"), ...Array(f).fill("f")].sort(() => Math.random() - 0.5);
+    const built = ctx.buildSchedule(n, 0, sx, sameSex);
+    check(!!built, `${tag} built a schedule`);
+    if (!built) continue;
+
+    // both sides of every game are the same kind of pair
+    built.rounds.forEach((g, i) => {
+      check(kind(g[0], sx) === kind(g[1], sx), `${tag} game ${i + 1} is ${kind(g[0], sx)} v ${kind(g[1], sx)}`);
+      check(new Set([...g[0], ...g[1]]).size === 4, `${tag} game ${i + 1} has a duplicate player`);
+    });
+
+    // every playable pair once, doubled pairs twice, unplayable same-sex pairs never
+    const seen = {};
+    built.rounds.forEach(g => g.forEach(p => { const k = p[0] + "-" + p[1]; seen[k] = (seen[k] || 0) + 1; }));
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+      const k = kind([i, j], sx);
+      const playable = k === "mf" || (sameSex && (k === "mm" ? m : f) >= 4);
+      const times = built.doubled.filter(d => d[0] === i && d[1] === j).length;
+      check((seen[i + "-" + j] || 0) === (playable ? 1 + times : 0),
+        `${tag} pair ${i}+${j} (${k}) appears ${seen[i + "-" + j] || 0}x`);
+    }
+
+    // nobody gets two extras, and the star gets one if their kind of pairing is odd
+    const ex = built.extras || [];
+    check(ex.length === new Set(ex).size, `${tag} someone got two extra games`);
+    const mm = m * (m - 1) / 2, ff = f * (f - 1) / 2;
+    const starOdd = (m * f) % 2 === 1 || (sameSex && (sx[0] === "m" ? m >= 4 && mm % 2 : f >= 4 && ff % 2));
+    check(!starOdd || ex.includes(0), `${tag} starred player should have an extra game`);
+
+    if (rep === 0) {
+      const gp = new Array(n).fill(0);
+      built.rounds.forEach(g => [...g[0], ...g[1]].forEach(p => gp[p]++));
+      console.log(`  ${tag.padEnd(12)} ${String(built.rounds.length).padStart(2)} games  ` +
+                  `games each ${Math.min(...gp)}-${Math.max(...gp)}  doubled pairs ${built.doubled.length}`);
+    }
+  }
+}
+}
+
 /* ---------- 2. scoring: best-N, worst dropped, no averages ---------- */
 console.log("\nScoring (6 players, Freddie starred)");
 
@@ -160,6 +206,60 @@ setResults({ 0: { a: 9, b: 4 } });
 const partial = table();
 check(partial.length === 6, "every player should appear before all games are played");
 check(partial.every(r => r.dropped.length === 0), "nothing should be dropped mid-tournament");
+
+/* ---------- 3. another round: everyone plays everyone again ---------- */
+console.log("\nAnother round");
+
+const T_of = () => vm.runInContext("JSON.parse(JSON.stringify(T))", ctx);
+const fresh = (n, sx, format) => {
+  const b = ctx.buildSchedule(n, 0, sx, format === "same");
+  const gp = new Array(n).fill(0);
+  b.rounds.forEach(g => [...g[0], ...g[1]].forEach(p => gp[p]++));
+  setT({ players: POOL.slice(0, n), rounds: b.rounds, extras: b.extras, results: {}, countBest: Math.min(...gp),
+         format, genders: sx, star: 0, starts: [0], final: { a: [0, 1], b: [2, 3], result: null } });
+  return b.rounds.length;
+};
+
+for (const [n, sx, format] of [[6, null, "any"], [7, null, "any"],
+                                [8, ["m", "f", "m", "f", "m", "f", "m", "f"], "mixed"],
+                                [9, ["m", "f", "m", "f", "m", "f", "m", "f", "m"], "same"]]) {
+  const len = fresh(n, sx, format);
+  const before = T_of().countBest;
+  check(vm.runInContext("addRound()", ctx) === true, `${format} N=${n} addRound worked`);
+  const t = T_of();
+  check(t.rounds.length === len * 2, `${format} N=${n} should have ${len * 2} games, got ${t.rounds.length}`);
+  check(JSON.stringify(t.starts) === JSON.stringify([0, len]), `${format} N=${n} round 2 starts at game ${len + 1}`);
+  check(t.countBest === before * 2, `${format} N=${n} best-N should double ${before} -> ${before * 2}, got ${t.countBest}`);
+  check(t.final === null, `${format} N=${n} adding a round clears the final`);
+  if (sx) t.rounds.forEach((g, i) =>
+    check(kind(g[0], sx) === kind(g[1], sx), `${format} N=${n} game ${i + 1} is ${kind(g[0], sx)} v ${kind(g[1], sx)}`));
+  console.log(`  ${format.padEnd(5)} N=${n}  ${len} -> ${t.rounds.length} games  best-${before} -> best-${t.countBest}`);
+}
+
+/* ---------- 4. the final: top four, or top two of each in mixed ---------- */
+console.log("\nFinal");
+
+const scoreAll = () => {
+  const r = {};
+  T_of().rounds.forEach((g, i) => { r[i] = { a: 9, b: (i * 5) % 9 }; });
+  setResults(r);
+};
+
+fresh(7, null, "any"); scoreAll();
+let order = table().map(r => r.p), fin = vm.runInContext("pickFinal()", ctx);
+check(JSON.stringify(fin.a) === JSON.stringify([order[0], order[3]]) &&
+      JSON.stringify(fin.b) === JSON.stringify([order[1], order[2]]), "anyone: final is 1st + 4th v 2nd + 3rd");
+console.log(`  anyone  ${fin.a.map(p => POOL[p]).join(" & ")} v ${fin.b.map(p => POOL[p]).join(" & ")}`);
+
+const sx8 = ["m", "f", "f", "m", "m", "f", "m", "f"];
+for (const format of ["mixed", "same"]) {
+  fresh(8, sx8, format); scoreAll();
+  order = table().map(r => r.p); fin = vm.runInContext("pickFinal()", ctx);
+  const boys = order.filter(p => sx8[p] === "m").slice(0, 2), girls = order.filter(p => sx8[p] === "f").slice(0, 2);
+  check(fin.a[0] === boys[0] && fin.a[1] === girls[1] && fin.b[0] === boys[1] && fin.b[1] === girls[0],
+    `${format}: final is top boy + 2nd girl v 2nd boy + top girl`);
+  console.log(`  ${format.padEnd(6)}  ${fin.a.map(p => POOL[p]).join(" & ")} v ${fin.b.map(p => POOL[p]).join(" & ")}`);
+}
 
 console.log(pass ? "\nALL CHECKS PASSED" : "\nFAILURES FOUND");
 process.exit(pass ? 0 : 1);
