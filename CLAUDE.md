@@ -20,8 +20,9 @@ State lives in two `localStorage` keys, both per-device:
 
 - `padel-tournament-v2` — the live tournament `{players, rounds, extras, results, countBest, format, genders, star, starts, final, courts, slot, target, limitGames, limit, ranking, measure, left}` (everything after `countBest` is optional, so older saves still load)
 - `padel-names-v2` — the last player list, starred index and genders, so setup is prefilled next time.
-  Courts, points, ranking and what wins are in the **Settings** dropdown on setup and start at
-  their defaults every visit (1 court, first to 9, average, most points) — not saved.
+  Setup has three buttons in a row: Format, Court time, Settings. Settings holds courts, points,
+  ranking and what wins; they start at their defaults every visit (1 court, first to 9, don't
+  count extras, most points) — not saved.
 
 There is no sync. One person scores. If the shape of the stored object ever
 changes, bump the key suffix rather than migrating.
@@ -112,23 +113,24 @@ for fun, stored in `T.final` and never counted in the table. Anyone: 1st + 4th
 v 2nd + 3rd. Mixed formats: top boy + 2nd girl v 2nd boy + top girl. Adding a
 round or clearing scores removes it.
 
-**2. Ranking is chosen per tournament (`T.ranking`), average by default.**
-Freddie asked for this (Oct 2026): a small "Rank the table by" switch on
-setup, **Average** selected unless changed, never a forced choice.
-- `avg` — average points per game. The table shows plain totals while
-  everyone has played the same number, and averages (one decimal) once
-  they differ. Added games and edits make counts uneven, which is why it's
-  the default.
-- `best` — the original rule: everyone ranked on the sum of their best
-  `countBest` games (`min` of games played among active players); anyone
-  with more has their lowest scores dropped, shown in their row.
-Saves from before this have no `ranking` and stay on `best`.
+**2. Ranking: everyone is ranked on the same number of games.** `countBest`
+is the fewest games any active player has. Under Settings, "If some play
+more games" (`T.ranking`) picks which of a player's games count:
+- `first` (default) — their first `countBest` games; extra games later
+  don't count (shown as "not counted" in their row).
+- `best` — their best `countBest` games; the worst are dropped.
+Freddie removed averages (Oct 2026) — **don't bring them back.** Saves with no
+`ranking` stay on `best`; `avg` saves from the short time it existed read as
+`first`.
+
+**Win by two** (`counted()`): a game that runs past the target counts as if it
+had stopped there, so 10–8, 13–11 and 15–13 at first to 9 all count 9–7. The
+real score is stored and shown, with the counted one in brackets
+(`scoreText()`), e.g. "13–11 (9–7)".
 
 **What wins is chosen too (`T.measure`)**: "Winner is who has most: Points |
-Games won" on setup, Points by default. `points` ranks on points (total,
-average, or best-N total), ties on games won; `wins` ranks on games won
-(count, share of games won shown as %, or wins in the best N), ties on
-points. In best-N with `wins`, a player's best games are wins first, then
+Games won" on setup, Points by default. `points` ranks on points in the counted games, ties on
+games won; `wins` ranks on games won in them, ties on points. In best-N with `wins`, a player's best games are wins first, then
 highest score.
 
 **Add a game** (`addGame()`): one game per court for spare time at the end.
@@ -174,7 +176,7 @@ menu → Install app.
 Live at https://freddie209.github.io/padel/ (GitHub Pages, `master`, root).
 Push to `master` to deploy.
 
-**After changing `index.html`, bump `CACHE` in `sw.js`** (`padel-v7` → `v8`…).
+**After changing `index.html`, bump `CACHE` in `sw.js`** (`padel-v8` → `v9`…).
 The service worker is cache-first, so without a bump an installed copy keeps
 serving the old version. With a bump, the new worker installs in the
 background on the next open and the page reloads itself once

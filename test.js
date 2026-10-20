@@ -348,19 +348,39 @@ for (const format of ["mixed", "same"]) {
   console.log(`  ${format.padEnd(6)}  ${fin.a.map(p => POOL[p]).join(" & ")} v ${fin.b.map(p => POOL[p]).join(" & ")}`);
 }
 
-/* ---------- 5. average ranking ---------- */
-console.log("\nAverage ranking");
+/* ---------- 5. first-N ranking: extra games don't count ---------- */
+console.log("\nFirst games only");
 
-// A plays 2 (9 + 9), B plays 3 (9 + 9 + 0): totals favour B, averages A
-setT({ players: ["A", "B", "C", "D", "E"], ranking: "avg", countBest: 2, extras: null, results: {},
-       rounds: [[[0, 1], [2, 3]], [[0, 1], [2, 4]], [[1, 2], [3, 4]]] });
-setResults({ 0: { a: 9, b: 3 }, 1: { a: 9, b: 5 }, 2: { a: 0, b: 9 } });
-const avgT = table();
-const rowOf = nm => avgT.find(r => r.name === nm);
-check(rowOf("A").avg === 9 && rowOf("B").avg === 6, `A averages 9 and B 6, got ${rowOf("A").avg} and ${rowOf("B").avg}`);
-check(avgT.indexOf(rowOf("A")) < avgT.indexOf(rowOf("B")), "A ranks above B on average despite a lower total");
-check(avgT.every(r => r.dropped.length === 0), "average ranking never drops scores");
-console.log(`  ${avgT.map(r => `${r.name} ${r.avg.toFixed(1)}`).join("  ")}`);
+// Everyone is ranked on 2 games. B plays three (3, 9, 9) and C three (3, 5, 9).
+// "first" counts their first two games, "best" their two highest.
+setT({ players: ["A", "B", "C", "D", "E"], ranking: "first", countBest: 2, extras: null, results: {},
+       rounds: [[[1, 2], [3, 4]], [[0, 1], [2, 3]], [[0, 1], [2, 4]]] });
+setResults({ 0: { a: 3, b: 9 }, 1: { a: 9, b: 5 }, 2: { a: 9, b: 9 } });
+let ft = table(), rowOf = nm => ft.find(r => r.name === nm);
+// B: 3, 9, 9 -> first two 12; best two 18. C: 3, 5, 9 -> first 8; best 14
+check(rowOf("B").total === 12 && rowOf("C").total === 8, `first: B 12 and C 8, got ${rowOf("B").total} and ${rowOf("C").total}`);
+check(JSON.stringify(rowOf("B").dropped) === "[9]", `first: B's third game (9) isn't counted, got ${JSON.stringify(rowOf("B").dropped)}`);
+setT({ ...T_of(), ranking: "best" }); ft = table();
+check(rowOf("B").total === 18 && rowOf("C").total === 14, `best: B 18 and C 14, got ${rowOf("B").total} and ${rowOf("C").total}`);
+check(JSON.stringify(rowOf("B").dropped) === "[3]", `best: B's worst (3) is dropped`);
+// a save from when average was the default reads as "first"
+setT({ ...T_of(), ranking: "avg" }); ft = table();
+check(rowOf("B").total === 12, `old "avg" saves rank on first games, got ${rowOf("B").total}`);
+console.log("  first: B 12, C 8   best: B 18, C 14");
+
+/* ---------- 5a. win by two counts as if stopped at the target ---------- */
+console.log("\nWin by two");
+for (const [a, b, ca, cb] of [[13, 11, 9, 7], [10, 8, 9, 7], [15, 13, 9, 7], [9, 4, 9, 4], [11, 13, 7, 9], [21, 19, 9, 7]]) {
+  const c = vm.runInContext(`counted({ a: ${a}, b: ${b} }, 9)`, ctx);
+  check(c.a === ca && c.b === cb, `${a}-${b} at first to 9 should count ${ca}-${cb}, got ${c.a}-${c.b}`);
+}
+setT({ players: ["A", "B", "C", "D"], ranking: "first", countBest: 1, extras: null, target: 9, results: {}, rounds: [[[0, 1], [2, 3]]] });
+setResults({ 0: { a: 13, b: 11 } });
+ft = table();
+check(rowOf("A").total === 9 && rowOf("C").total === 7, `13-11 puts 9 and 7 on the table, got ${rowOf("A").total} and ${rowOf("C").total}`);
+check(vm.runInContext("scoreText({ a: 13, b: 11 })", ctx) === "13&ndash;11 (9&ndash;7)", "13-11 shows as 13-11 (9-7)");
+check(vm.runInContext("scoreText({ a: 9, b: 4 })", ctx) === "9&ndash;4", "a normal score shows on its own");
+console.log("  13-11, 10-8, 15-13 all count as 9-7");
 
 /* ---------- 5b. ranking on games won ---------- */
 console.log("\nGames won ranking");
@@ -370,7 +390,7 @@ console.log("\nGames won ranking");
 const fourGames = [[[0, 2], [1, 3]], [[0, 3], [1, 2]], [[1, 4], [0, 5]], [[1, 5], [0, 4]]];
 const wonRes = { 0: { a: 9, b: 8 }, 1: { a: 9, b: 8 }, 2: { a: 8, b: 9 }, 3: { a: 9, b: 0 } };
 const wonBase = { players: ["P", "Q", "R", "S", "U", "V"], rounds: fourGames, results: {}, countBest: 4, extras: null };
-for (const ranking of ["avg", "best"]) {
+for (const ranking of ["first", "best"]) {
   setT({ ...wonBase, ranking, measure: "points" }); setResults(wonRes);
   const byPts = table().map(r => r.name);
   setT({ ...wonBase, ranking, measure: "wins" }); setResults(wonRes);
