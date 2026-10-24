@@ -160,6 +160,21 @@ h1{font-size:26px;font-weight:800;letter-spacing:-.035em;line-height:.95;margin:
   font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .gbar[data-on="1"]{background:var(--tile);}
 .gopen{margin:0 0 10px;}
+.pick .pteams{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;margin:2px 0 4px;}
+.pick .pteams span{flex:1;text-align:center;padding:9px 6px;border-radius:9px;background:var(--tile);}
+.pick .pteams i{font-family:'DM Mono',monospace;font-style:normal;font-size:10px;color:var(--mute);}
+.pchip{min-height:38px;padding:0 12px;border-radius:8px;background:var(--tile);font-size:13px;font-weight:600;}
+.pchip[data-on="1"]{background:var(--line);color:var(--deep);}
+.pbtns{display:flex;gap:6px;margin-top:12px;}
+.pbtns > *{flex:1;}
+.histline{text-align:center;margin-top:12px;}
+.link{min-height:38px;padding:0 8px;font-family:'DM Mono',monospace;font-size:11px;color:var(--mute);
+  text-decoration:underline;text-decoration-color:var(--hair);text-underline-offset:4px;}
+.histform{margin-top:14px;display:flex;flex-direction:column;gap:7px;}
+.histform .pin{flex:none;width:100%;}
+.hrow{display:flex;align-items:center;gap:10px;padding:10px 13px;background:var(--court);border-radius:11px;margin-top:6px;}
+.hrow .final{min-height:38px;padding:0 6px;}
+.final[data-armed="1"]{color:var(--ball);}
 .more{width:100%;margin-top:14px;padding:13px;border-radius:11px;font-size:13px;font-weight:600;
   box-shadow:inset 0 0 0 1px var(--hair);color:var(--line);}
 .more[data-armed="1"]{background:var(--ball);color:var(--deep);box-shadow:none;}
@@ -177,6 +192,8 @@ h1{font-size:26px;font-weight:800;letter-spacing:-.035em;line-height:.95;margin:
 <script>
 "use strict";
 const T_KEY = "padel-tournament-v2";
+// saved tournaments: [{id, title, date, T}], newest last
+const H_KEY = "padel-history-v1";
 const N_KEY = "padel-names-v2";
 const MINS_PER_GAME = 12;   // at first to 9; scales with the points
 const minsPerGame = pts => MINS_PER_GAME * pts / 9;
@@ -320,21 +337,27 @@ function factorGames(pairs, extra) {
   return rest ? games.concat(rest) : null;
 }
 
+// `priority` is who's starred for the extra game: none, one or two players
+// (a number or an array). With two starred and an odd number of pairs, those
+// two are the pair that plays twice; with one, they're joined at random.
 function buildSchedule(n, priority, genders, sameSex, courts = 1) {
-  const star = (priority != null && priority >= 0 && priority < n) ? priority : null;
+  const stars = [].concat(priority ?? []).filter(p => p >= 0 && p < n);
   const extras = [], doubled = [];
   const groups = pairGroups(n, genders, sameSex);
   const dups = groups.map(() => []);
   groups.forEach((pairs, gi) => {
-    // an odd number of pairs means one pair plays together twice: the starred
-    // player if they're in this kind, and never someone who already has an extra
+    // an odd number of pairs means one pair plays together twice: both
+    // starred players if they can partner in this kind, else one of them,
+    // and never someone who already has an extra
     if (pairs.length % 2 === 1) {
       const free = pairs.filter(p => !extras.includes(p[0]) && !extras.includes(p[1]));
-      const withStar = star != null && !extras.includes(star) ? free.filter(p => p.includes(star)) : [];
-      const from = withStar.length ? withStar : free;
+      const want = stars.filter(p => !extras.includes(p));
+      let from = want.length === 2 ? free.filter(p => p.includes(want[0]) && p.includes(want[1])) : [];
+      if (!from.length) from = free.filter(p => want.some(w => p.includes(w)));
+      if (!from.length) from = free;
       const d = from[Math.floor(Math.random() * from.length)];
-      const pick = d.includes(star) ? [star, d[0] === star ? d[1] : d[0]] : d;
-      dups[gi].push(d); doubled.push(d); extras.push(...pick);
+      dups[gi].push(d); doubled.push(d);
+      extras.push(...(want.includes(d[1]) && !want.includes(d[0]) ? [d[1], d[0]] : d));
     }
   });
   // On one court any set of games will do. On several, how the pairs are
@@ -420,7 +443,8 @@ function buildLimited(n, genders, sameSex, courts, G, avoid = [], start = null) 
 /* ============ state ============ */
 let T = null;
 let names = ["", "", "", ""];
-let priority = 0;
+// rows starred for the extra game: none (both picked at random), one or two
+let stars = [];
 // format isn't saved: every new visit starts on "any" unless you change it
 const FORMATS = {
   any: { short: "Anyone", name: "Anyone with anyone", desc: "Boy or girl doesn't matter. The default." },
@@ -437,8 +461,8 @@ const LIMITS = [0, 30, 45, 60, 75, 90, 120, 150, 180];
 const LIMIT_SHORT = { 0: "None", 30: "30m", 45: "45m", 60: "1h", 75: "1&frac14;h", 90: "1&frac12;h", 120: "2h", 150: "2&frac12;h", 180: "3h" };
 const LIMIT_NAME = { 0: "No limit", 30: "30 min", 45: "45 min", 60: "1 hour", 75: "1&frac14; hours", 90: "1&frac12; hours", 120: "2 hours", 150: "2&frac12; hours", 180: "3 hours" };
 // how the table ranks people who've played different numbers of games:
-// their "first" N games (the default; extras don't count), or their "best" N
-let ranking = "first";
+// their "best" N (the default), an "avg" per game, or their "first" N
+let ranking = "best";
 // what wins: "points" scored (the default) or "wins", games won
 let measure = "points";
 // editing a tournament in progress reuses the setup screen; editFrom[i] is
@@ -448,6 +472,10 @@ let view = "setup", tab = "rounds";
 let open = null, winner = null, winScore = 9;
 // game slots opened from their bar on the games list
 const expanded = new Set();
+// players tapped so far when choosing a game by hand (null when not choosing)
+let picking = null;
+// history: the save form on the tournament screen, the list on setup
+let histForm = false, showHist = false;
 // the tournament's points to win; older saves were all first to 9
 const target = () => (T && T.target) || 9;
 let armed = null, armTimer = null;
@@ -456,13 +484,22 @@ try { const s = localStorage.getItem(T_KEY); if (s) { T = JSON.parse(s); view = 
 try {
   const s = localStorage.getItem(N_KEY);
   if (s) {
-    const d = JSON.parse(s); names = d.names || names; priority = d.priority ?? 0;
+    const d = JSON.parse(s); names = d.names || names; stars = Array.isArray(d.stars) ? d.stars : [];
     genders =names.map((_, i) => (d.genders && d.genders[i]) || "");
   }
 } catch (e) { }
 
-const saveT = () => { try { T ? localStorage.setItem(T_KEY, JSON.stringify(T)) : localStorage.removeItem(T_KEY); } catch (e) { } };
-const saveN = () => { try { localStorage.setItem(N_KEY, JSON.stringify({ names, priority, genders })); } catch (e) { } };
+const loadH = () => { try { return JSON.parse(localStorage.getItem(H_KEY)) || []; } catch (e) { return []; } };
+const saveH = list => { try { localStorage.setItem(H_KEY, JSON.stringify(list)); } catch (e) { } };
+// a tournament saved to history keeps its history copy up to date as you score
+const saveT = () => {
+  try { T ? localStorage.setItem(T_KEY, JSON.stringify(T)) : localStorage.removeItem(T_KEY); } catch (e) { }
+  if (T && T.histId) {
+    const list = loadH(), e = list.find(x => x.id === T.histId);
+    if (e) { e.T = T; e.title = T.title; e.date = T.date; saveH(list); }
+  }
+};
+const saveN = () => { try { localStorage.setItem(N_KEY, JSON.stringify({ names, stars, genders })); } catch (e) { } };
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const app = document.getElementById("app");
 
@@ -505,17 +542,19 @@ const scoreText = s => {
   return `${s.a}&ndash;${s.b}` + (c !== s ? ` (${c.a}&ndash;${c.b})` : "");
 };
 
-// Ranking when some play more games than others. Everyone is ranked on the
-// same number of games, countBest (the fewest anyone has), and either:
-//   "first" (the default): their first countBest games count, extras don't
-//   "best": their best countBest games count, the worst are dropped
-// Older saves with no ranking keep "best"; "avg" (briefly the default) reads as "first".
+// When some play more games than others (Settings, "If some play more
+// games"; T.ranking), one of:
+//   "best" (the default): everyone counts the same number of games,
+//          countBest, their best ones, so an extra game replaces their worst
+//   "avg": average per game, all games count
+//   "first": their first countBest games count; extra games don't
+// Older saves with no ranking are "best".
 // T.measure picks what's counted: "points" (ties broken on games won) or
 // "wins", games won (ties broken on points). With "best" and wins, a
 // player's best games are the wins first, then the highest scores.
-const rankFirst = () => T.ranking === "first" || T.ranking === "avg";
+const rankMode = () => T.ranking || "best";
 function standings() {
-  const first = rankFirst(), byWins = T.measure === "wins";
+  const mode = rankMode(), byWins = T.measure === "wins";
   const games = T.players.map(() => []);
   T.rounds.forEach((g, idx) => {
     const s = T.results[idx];
@@ -527,19 +566,24 @@ function standings() {
   const sumOf = (list, k) => list.reduce((a, x) => a + (k === "won" ? +x.won : x.pts), 0);
   return activeIdx().map(p => {
     // games are already in the order played; "best" re-sorts them
-    const order = first ? games[p] : [...games[p]].sort((x, y) => (byWins ? y.won - x.won : 0) || y.pts - x.pts);
-    const kept = order.slice(0, T.countBest);
+    const order = mode === "best" ? [...games[p]].sort((x, y) => (byWins ? y.won - x.won : 0) || y.pts - x.pts) : games[p];
+    const kept = mode === "avg" ? order : order.slice(0, T.countBest);
+    const n = order.length;
     const r = {
       name: T.players[p], p,
       total: sumOf(kept, "pts"),
       wins: sumOf(kept, "won"),
+      avg: n ? sumOf(order, "pts") / n : 0,
+      rate: n ? sumOf(order, "won") / n : 0,
       allWins: sumOf(order, "won"),
-      played: order.length,
-      dropped: order.slice(T.countBest).map(x => x.pts),
+      played: n,
+      dropped: mode === "avg" ? [] : order.slice(T.countBest).map(x => x.pts),
       extra: T.extras ? T.extras.includes(p) : false
     };
     // what's ranked on first, then the tie-break
-    r.key = byWins ? [r.wins, r.total] : [r.total, r.wins];
+    r.key = mode === "avg"
+      ? (byWins ? [r.rate, r.avg] : [r.avg, r.rate])
+      : (byWins ? [r.wins, r.total] : [r.total, r.wins]);
     return r;
   }).sort((x, y) => y.key[0] - x.key[0] || y.key[1] - x.key[1] || x.name.localeCompare(y.name));
 }
@@ -557,6 +601,8 @@ const fewestGames = () => { const gp = gamesEach(); return Math.min(...activeIdx
 
 // which time slot each game is in; older saves have one game per slot
 const slotsOf = () => T.slot || T.rounds.map((_, i) => i);
+// starred players; older saves have a single `star`
+const tStars = () => T.stars || (T.star != null ? [T.star] : []);
 
 // The builders work on players 0..m-1. These map the active players in and
 // the games back out, with past partnerships for steering.
@@ -592,7 +638,7 @@ function addRound() {
   const L = localSpace();
   const built = T.limitGames
     ? buildLimited(L.m, L.gl, T.format === "same", L.courts, T.limitGames, L.past)
-    : buildSchedule(L.m, T.star in L.loc ? L.loc[T.star] : null, L.gl, T.format === "same", L.courts);
+    : buildSchedule(L.m, tStars().filter(p => p in L.loc).map(p => L.loc[p]), L.gl, T.format === "same", L.courts);
   if (!built) return false;
   T.starts = [...(T.starts || [0]), T.rounds.length];
   if (built.extras) T.extras = [...new Set([...(T.extras || []), ...built.extras.map(i => L.active[i])])];
@@ -602,6 +648,36 @@ function addRound() {
 
 // One more game on each court, for spare time at the end: whoever has
 // played least goes on, with partners they haven't had where possible
+// Delete a game that has no score yet. Later games, results and slots shift
+// down; an emptied slot disappears.
+function deleteGame(idx) {
+  if (T.results[idx]) return;
+  const slot = slotsOf();
+  T.rounds.splice(idx, 1); slot.splice(idx, 1);
+  const uniq = [...new Set(slot)];
+  T.slot = slot.map(x => uniq.indexOf(x));
+  const res = {};
+  Object.keys(T.results).forEach(k => { res[+k > idx ? +k - 1 : +k] = T.results[k]; });
+  T.results = res;
+  T.starts = [...new Set((T.starts || [0]).map(x => x > idx ? x - 1 : x).filter(x => x < T.rounds.length || x === 0))];
+  T.countBest = fewestGames();
+}
+
+// A game you pick yourself: the first two tapped against the next two,
+// added as its own slot at the end
+function addChosenGame(four) {
+  const pr = (a, b) => [Math.min(a, b), Math.max(a, b)];
+  appendGames({ rounds: [[pr(four[0], four[1]), pr(four[2], four[3])]], slot: [0] }, r => r);
+}
+
+// winner of a saved tournament, for the history list
+function leaderOf(t) {
+  const keep = T; T = t;
+  try { return Object.keys(T.results).length ? standings()[0].name : null; } finally { T = keep; }
+}
+const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+const niceDate = iso => { try { return new Date(iso + "T12:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }); } catch (e) { return iso; } };
+
 function addGame() {
   const L = localSpace();
   const built = buildLimited(L.m, L.gl, T.format === "same", L.courts, L.courts, L.past, L.start);
@@ -657,11 +733,14 @@ function renderSetup() {
       <span class="pval">${points}</span>
       <button class="tab" data-act="pts" data-v="${points + 1}">+</button></div>
     <div class="setrow stack"><span class="eyebrow">If some play more games</span>
-      <button class="tab wide" data-on="${ranking === "first" ? 1 : 0}" data-act="rank" data-v="first">Don't count extras</button>
-      <button class="tab wide" data-on="${ranking === "best" ? 1 : 0}" data-act="rank" data-v="best">Use best games</button></div>
-    <div class="hint" style="margin:-4px 0 12px">${ranking === "first"
-      ? "Everyone is ranked on the same number of games. Anyone who plays more: their extra games don't count."
-      : "Everyone is ranked on the same number of games, their best ones. Anyone who plays more has their worst dropped."}</div>
+      <button class="tab wide" data-on="${ranking === "best" ? 1 : 0}" data-act="rank" data-v="best">Drop worst</button>
+      <button class="tab wide" data-on="${ranking === "avg" ? 1 : 0}" data-act="rank" data-v="avg">Average</button>
+      <button class="tab wide" data-on="${ranking === "first" ? 1 : 0}" data-act="rank" data-v="first">Don't count</button></div>
+    <div class="hint" style="margin:-4px 0 12px">${{
+      best: "An extra game replaces their worst score, so everyone counts the same number of games.",
+      avg: "Ranked on average per game, so playing more or fewer doesn't help or hurt.",
+      first: "Their extra games don't count at all, so everyone counts the same number of games."
+    }[ranking]}</div>
     <div class="setrow stack"><span class="eyebrow">Winner is who has most</span>
       <button class="tab wide" data-on="${measure === "points" ? 1 : 0}" data-act="measure" data-v="points">Points</button>
       <button class="tab wide" data-on="${measure === "wins" ? 1 : 0}" data-act="measure" data-v="wins">Games won</button></div>
@@ -674,7 +753,7 @@ function renderSetup() {
 
   names.forEach((v, i) => {
     h += `<div class="prow">
-      <button class="star" data-on="${priority === i ? 1 : 0}" data-act="star" data-i="${i}" title="Gets the extra game">&#9733;</button>`;
+      <button class="star" data-on="${stars.includes(i) ? 1 : 0}" data-act="star" data-i="${i}" title="Gets the extra game">&#9733;</button>`;
     if (format !== "any") h += `<button class="sex" data-g="${genders[i]}" data-act="sex" data-i="${i}">${{ m: "Boy", f: "Girl" }[genders[i]] || "?"}</button>`;
     h += `
       <input class="pin" data-i="${i}" value="${esc(v)}" placeholder="Player ${i + 1}"
@@ -685,10 +764,21 @@ function renderSetup() {
 
   h += `<button class="add" data-act="add">+ Add player</button>`;
 
-  h += `<div class="hint">&#9733; marks who gets the extra game when the numbers don't divide evenly. They're joined by one other player, picked at random each time you build a schedule.</div>`;
+  h += `<div class="hint">&#9733; picks who gets the extra game when the numbers don't divide evenly. Star two, star one (joined by someone at random), or none for both at random.</div>`;
 
   h += `<div class="summary" id="sum">${summaryHTML()}</div>`;
   h += `<button class="go" id="go" data-act="create" ${bad ? "disabled" : ""}>${editing ? "Save changes" : "Build the schedule"}</button>`;
+  const hist = editing ? [] : loadH();
+  if (hist.length) {
+    h += `<div class="histline"><button class="link" data-act="hlist">History &middot; ${hist.length} saved ${showHist ? "&#9662;" : "&#9656;"}</button></div>`;
+    if (showHist) [...hist].reverse().forEach(e => {
+      const won = leaderOf(e.T), live = T && T.histId === e.id;
+      h += `<div class="hrow"><div class="who"><div class="nm">${esc(e.title)}</div>
+          <div class="sub">${niceDate(e.date)} &middot; ${e.T.players.length} players${won ? ` &middot; won by ${esc(won)}` : ""}${live ? " &middot; open now" : ""}</div></div>
+        <button class="final" data-act="hopen" data-v="${e.id}" data-armed="${armed === "hopen" + e.id ? 1 : 0}">${armed === "hopen" + e.id ? "tap again" : "open"}</button>
+        <button class="final" data-act="hdel" data-v="${e.id}" data-armed="${armed === "hdel" + e.id ? 1 : 0}">${armed === "hdel" + e.id ? "delete?" : "&times;"}</button></div>`;
+    });
+  }
   app.innerHTML = h;
 }
 
@@ -697,17 +787,16 @@ function summaryHTML() {
   const n = clean.length;
   const pairs = n >= 2 ? n * (n - 1) / 2 : 0;
   const gamesN = pairs % 2 ? (pairs + 1) / 2 : pairs / 2;
-  const starRaw = names[priority] ? names[priority].trim() : "";
   const issue = setupIssue();
   if (issue) return issue;
   if (midEdit()) return editSummaryHTML(n);
   if (needsCut(n)) return limitedSummaryHTML(n);
-  if (format !== "any") return mixedSummaryHTML(clean, starRaw, format === "same");
+  if (format !== "any") return mixedSummaryHTML(clean, format === "same");
   let h = `<b>${n}</b> players &middot; <b>${gamesN}</b> games &middot; ${timeHTML(n, gamesN)}<br>`;
   h += `every pair partners up exactly once`;
   if (pairs % 2 === 1) {
     h += `<br><span class="ball">${pairs} pairings is an odd number, so one pair plays together twice. `
-       + `${starRaw ? esc(starRaw) : "The starred player"} and one other play ${n} games; everyone else plays ${n - 1}. `
+       + `${whoExtra()} play ${n} games; everyone else plays ${n - 1}. `
        + `${fairText(n - 1)}</span>`;
   } else {
     h += `<br>everyone plays <b>${n - 1}</b> games &mdash; no extras needed`;
@@ -717,7 +806,14 @@ function summaryHTML() {
 }
 
 // Mirrors pairGroups() so the counts here match what buildSchedule() makes
-function mixedSummaryHTML(clean, starRaw, sameSex) {
+// starred names on the setup screen, in row order
+const starNames = () => stars.filter(i => names[i] && names[i].trim()).sort((a, b) => a - b).map(i => names[i].trim());
+function whoExtra() {
+  const s = starNames().map(esc);
+  return s.length === 2 ? `${s[0]} and ${s[1]}` : s.length === 1 ? `${s[0]} and one other, picked at random,` : "Two players, picked at random,";
+}
+
+function mixedSummaryHTML(clean, sameSex) {
   const n = clean.length, g = cleanGenders();
   const m = g.filter(x => x === "m").length, f = n - m;
   const kinds = [
@@ -736,11 +832,11 @@ function mixedSummaryHTML(clean, starRaw, sameSex) {
 
   const odd = kinds.filter(k => k.pairs % 2);
   if (odd.length) {
-    const ci = clean.indexOf(starRaw), starSex = ci >= 0 ? g[ci] : null;
-    const starIn = starSex && odd.some(k => k.sex === null || k.sex === starSex);
+    // starred players whose kind of pairing is one of the odd ones
+    const starIn = starNames().filter(nm => { const sx = g[clean.indexOf(nm)]; return odd.some(k => k.sex === null || k.sex === sx); });
     h += `<br><span class="ball">${andList(odd.map(k => `${k.pairs} ${k.label}`))} pairings ${odd.length > 1 ? "are odd numbers" : "is an odd number"}, `
        + `so ${odd.length > 1 ? odd.length + " pairs play" : "one pair plays"} together twice and ${odd.length * 2} players get an extra game`
-       + `${starIn ? `, including ${esc(starRaw)}` : ""}.</span>`;
+       + `${starIn.length ? `, including ${andList(starIn.map(esc))}` : ", picked at random"}.</span>`;
   }
   if (boyGames === girlGames) h += `<br>everyone plays <b>${boyGames}</b> games${odd.length ? " before extras" : ""}`;
   else h += `<br>boys play <b>${boyGames}</b> games, girls play <b>${girlGames}</b>`;
@@ -789,9 +885,11 @@ function fitPoints(n) {
 }
 
 // how the summary explains uneven game counts, by ranking
-const fairText = k => ranking === "first"
-  ? `Only each player's first ${k} games count; any extra ones don't.`
-  : `Only each player's best ${k} games count.`;
+const fairText = k => ({
+  best: `Only each player's best ${k} games count, so an extra game replaces their worst.`,
+  avg: "The table ranks on average per game, so that's fair.",
+  first: `Only each player's first ${k} games count; any extra ones don't.`
+})[ranking];
 
 // editing after games have been scored: say what stays and what's rebuilt
 const midEdit = () => editing && T && Object.keys(T.results).length > 0;
@@ -804,7 +902,7 @@ function editSummaryHTML(n) {
   else h += `no games need changing`;
   if (points !== target()) h += `<br>new games are first to <b>${points}</b>; scores already in stay as they are`;
   if (ch.removed) h += `<br>${ch.removed === 1 ? "the player you removed leaves" : ch.removed + " players you removed leave"} the table; their partners keep those scores`;
-  h += `<br>the table ranks on ${measure === "wins" ? "games won" : "points"} in each player's ${ranking === "first" ? "first" : "best"} games`;
+  h += `<br>the table ranks on ${measure === "wins" ? "games won" : "points"}${{ best: " in each player's best games", avg: " per game, on average", first: " in each player's first games" }[ranking]}`;
   return h;
 }
 
@@ -843,10 +941,14 @@ function renderPlay() {
   const slot = slotsOf(), multi = (T.courts || 1) > 1;
   const liveSlot = nextUp >= 0 ? slot[nextUp] : -1;
 
+  // time left: the slots still with an unscored game, at minutes per game
+  const slotsLeft = new Set(T.rounds.map((_, i) => i).filter(i => !T.results[i]).map(i => slot[i])).size;
+  const minsLeft = Math.round(slotsLeft * minsPerGame(target()));
+
   let h = `<div class="top"><div>
-      <div class="eyebrow">${activeIdx().length} players${T.format && T.format !== "any" ? " &middot; " + FORMATS[T.format].short.toLowerCase() : ""} &middot; first to ${target()}${T.limitGames ? " &middot; time-limited" : ""}</div>
+      <div class="eyebrow">${T.title ? esc(T.title) + " &middot; " : ""}${activeIdx().length} players${T.format && T.format !== "any" ? " &middot; " + FORMATS[T.format].short.toLowerCase() : ""} &middot; first to ${target()}${T.limitGames ? " &middot; time-limited" : ""}</div>
       <h1>Everyone<br>plays everyone</h1></div>
-      <div class="prog"><b>${played}</b>/${total}<br>games</div></div>`;
+      <div class="prog"><b>${played}</b>/${total} games${minsLeft ? `<br>about ${dur(minsLeft)} left` : ""}</div></div>`;
 
   h += `<div class="tabs">
       <button class="tab" data-on="${tab === "rounds" ? 1 : 0}" data-act="tab" data-v="rounds">Rounds</button>
@@ -868,6 +970,17 @@ function renderPlay() {
       m += `</button>`;
     });
     return m;
+  };
+  // choosing a game by hand: tap four names, the first two v the next two
+  const pickHTML = () => {
+    const t = i => picking[i] != null ? esc(nm(picking[i])) : "?";
+    let m = `<div class="card pick"><div class="chead"><div class="eyebrow">Choose a game &middot; tap four players</div></div>
+      <div class="pteams"><span>${t(0)} &amp; ${t(1)}</span><i>v</i><span>${t(2)} &amp; ${t(3)}</span></div><div class="chips">`;
+    activeIdx().forEach(p => {
+      m += `<button class="pchip" data-act="pickp" data-v="${p}" data-on="${picking.includes(p) ? 1 : 0}">${esc(nm(p))}</button>`;
+    });
+    return m + `</div><div class="pbtns"><button class="go" data-act="pickadd" ${picking.length < 4 ? "disabled" : ""}>Add this game</button>
+      <button class="more" style="margin-top:0" data-act="pickx">Cancel</button></div></div>`;
   };
   const askHTML = key => {
     if (open !== key) return "";
@@ -899,6 +1012,7 @@ function renderPlay() {
         c += `<div class="card" data-live="${isLive ? 1 : 0}" data-done="${s && !isOpen ? 1 : 0}">
           <div class="chead"><div class="eyebrow">${isLive ? "On court &middot; " + label.toLowerCase() : label}</div>`;
         if (s && !isOpen) c += `<button class="final" data-act="edit" data-v="${idx}">${scoreText(s)} &middot; change</button>`;
+        else if (!s && !isOpen) c += `<button class="final" data-act="delg" data-v="${idx}" data-armed="${armed === "delg" + idx ? 1 : 0}">${armed === "delg" + idx ? "tap to delete" : "delete"}</button>`;
         c += `</div>` + matchHTML(idx, g, s);
         // on several courts the bench is everyone off every court, shown once per slot
         const bench = k === idxs.length - 1 ? activeIdx().filter(i => !on.has(i)) : [];
@@ -949,34 +1063,39 @@ function renderPlay() {
     const again = T.limitGames || (starts.length > 1 ? starts[1] : total), multiC = (T.courts || 1) > 1;
     h += `<button class="more" data-act="one" data-armed="${armed === "one" ? 1 : 0}">${armed === "one"
       ? "Tap again to add" : multiC ? "+ Add a game on each court" : "+ Add a game"}</button>
+      ${picking ? pickHTML() : `<button class="more" style="margin-top:7px" data-act="pick">+ Choose a game</button>`}
       <button class="more" style="margin-top:7px" data-act="again" data-armed="${armed === "again" ? 1 : 0}">${armed === "again"
       ? `Tap again to add ${again} games` : "+ Add another round"}</button>
       <div class="hint">Spare time at the end? Add a game: whoever has played least goes on, with new partners where possible.
-        Or add a whole round, everyone again.${F ? " Either clears the final." : ""}</div>`;
+        Or choose the four yourself, or add a whole round, everyone again. Any game without a score can be deleted.${F ? " Adding clears the final." : ""}</div>`;
     if (finished.length) h += `<div class="eyebrow sec">Played</div>` + finished.map(barHTML).join("");
   } else {
     if (played === 0) {
       h += `<div class="empty">No scores yet.<br>Play game 1, then tap the pair that won.</div>`;
     } else {
-      const rows = standings(), byWins = T.measure === "wins", first = rankFirst();
+      const rows = standings(), byWins = T.measure === "wins", mode = rankMode();
+      const level = rows.every(r => r.played === rows[0].played), share = mode === "avg" && !level;
       rows.forEach((r, i) => {
         // the big number is what's ranked on; the line under it has the rest
+        const big = byWins ? (share ? Math.round(r.rate * 100) + "%" : r.wins) : (share ? r.avg.toFixed(1) : r.total);
         let sub = `${r.played} played &middot; ${r.allWins} won`;
-        if (byWins) sub += ` &middot; ${r.total} points`;
-        if (r.dropped.length) sub += ` &middot; <span class="drop">${first ? "not counted" : "dropped"} ${r.dropped.join(", ")}</span>`;
+        if (byWins || share) sub += ` &middot; ${r.total} points`;
+        if (r.dropped.length) sub += ` &middot; <span class="drop">${mode === "first" ? "not counted" : "dropped"} ${r.dropped.join(", ")}</span>`;
         h += `<div class="row" data-lead="${i === 0 ? 1 : 0}">
             <span class="rank">${i + 1}</span>
             <div class="who"><div class="nm">${esc(r.name)}</div><div class="sub">${sub}</div></div>
-            <span class="avg">${byWins ? r.wins : r.total}</span></div>`;
+            <span class="avg">${big}</span></div>`;
       });
       const gp = gamesEach();
       const more = activeIdx().filter(p => gp[p] > T.countBest).map(p => esc(T.players[p]));
       const what = byWins ? "games won" : "points", tie = byWins ? "points" : "games won";
-      if (!more.length) {
-        h += `<div class="note">Ranked on ${what}, then ${tie}. Everyone plays ${T.countBest} games, so these are straight totals.</div>`;
+      if (share) {
+        h += `<div class="note">Ranked on ${byWins ? "the share of games won" : "average points per game"}, then ${byWins ? "average points" : "games won"}, because not everyone has played the same number yet.</div>`;
+      } else if (mode === "avg" || !more.length) {
+        h += `<div class="note">Ranked on ${what}, then ${tie}. Everyone has played ${rows[0].played}, so these are straight totals.</div>`;
       } else {
-        h += `<div class="note">Ranked on ${what} in each player's ${first ? "first" : "best"} ${T.countBest} games, then ${tie}.
-          ${andList(more)} play${more.length === 1 ? "s" : ""} more than that, so ${first ? "the extra games don't count" : "their lowest scores drop out"}.</div>`;
+        h += `<div class="note">Ranked on ${what} in each player's ${mode === "first" ? "first" : "best"} ${T.countBest} games, then ${tie}.
+          ${andList(more)} play${more.length === 1 ? "s" : ""} more than that, so ${mode === "first" ? "the extra games don't count" : "their lowest scores drop out"}.</div>`;
       }
     }
   }
@@ -986,6 +1105,15 @@ function renderPlay() {
       <button data-act="editT">Edit</button>
       <button data-act="setup">New tournament</button>
     </div>`;
+  if (histForm) {
+    h += `<div class="histform"><input class="pin" id="htitle" placeholder="Title, e.g. Sister's birthday padel" value="${esc(T.title || "")}" autocomplete="off" autocapitalize="sentences">
+      <input class="pin" id="hdate" type="date" value="${T.date || todayISO()}">
+      <div class="pbtns"><button class="go" data-act="hsave">Save</button><button class="more" style="margin-top:0" data-act="hcancel">Cancel</button></div></div>`;
+  } else {
+    h += `<div class="histline"><button class="link" data-act="hform">${T.histId
+      ? `Saved to history as &ldquo;${esc(T.title)}&rdquo;, ${niceDate(T.date)} &middot; rename`
+      : "Save to history"}</button></div>`;
+  }
   app.innerHTML = h;
 }
 
@@ -995,21 +1123,21 @@ const render = () => view === "setup" ? renderSetup() : renderPlay();
 // a fresh tournament from the setup screen
 function createTournament() {
   const clean = cleanNames();
-  // priority index within the cleaned list
-  const starRaw = names[priority] ? names[priority].trim() : "";
-  const pIdx = starRaw ? clean.indexOf(starRaw) : -1;
+  // starred players' indices within the cleaned list
+  const starIdx = starNames().map(nm => clean.indexOf(nm));
   const lp = needsCut(clean.length) ? limitedPlan(clean.length) : null;
   const built = lp
     ? buildLimited(clean.length, format === "any" ? null : cleanGenders(), format === "same", useCourts(clean.length), lp.G)
-    : buildSchedule(clean.length, pIdx >= 0 ? pIdx : null,
+    : buildSchedule(clean.length, starIdx,
         format === "any" ? null : cleanGenders(), format === "same", useCourts(clean.length));
   if (!built) { alert("Couldn't build a schedule for that many players. Try adding or removing one."); return false; }
   const gp = new Array(clean.length).fill(0);
   built.rounds.forEach(g => [...g[0], ...g[1]].forEach(p => gp[p]++));
   T = { players: clean, rounds: built.rounds, extras: built.extras, results: {}, countBest: Math.min(...gp), format,
-        genders: format === "any" ? null : cleanGenders(), star: pIdx >= 0 ? pIdx : null, starts: [0], final: null,
+        genders: format === "any" ? null : cleanGenders(), stars: starIdx, starts: [0], final: null,
         courts: useCourts(clean.length), slot: built.slot, target: points, limitGames: lp ? lp.G : null,
         limit, ranking, measure };
+  histForm = false; picking = null;
   saveT(); saveN();
   return true;
 }
@@ -1018,18 +1146,18 @@ function createTournament() {
 // setup screen before is kept to put back if you leave without saving.
 function startEdit() {
   syncInputs();
-  editSnap = { names, genders, priority, format, courts, points, limit, ranking, measure };
+  editSnap = { names, genders, stars, format, courts, points, limit, ranking, measure };
   const act = activeIdx();
   names = act.map(p => T.players[p]);
   genders = act.map(p => (T.genders && T.genders[p]) || "");
   editFrom = [...act];
-  priority = Math.max(0, act.indexOf(T.star));
+  stars = tStars().map(p => act.indexOf(p)).filter(i => i >= 0);
   format = T.format || "any"; courts = T.courts || 1; points = target();
-  limit = T.limit || 0; ranking = !T.ranking || T.ranking === "best" ? "best" : "first"; measure = T.measure || "points";
+  limit = T.limit || 0; ranking = rankMode(); measure = T.measure || "points";
   editing = true; view = "setup"; showOpts = null; armed = null;
 }
 function endEdit() {
-  if (editSnap) ({ names, genders, priority, format, courts, points, limit, ranking, measure } = editSnap);
+  if (editSnap) ({ names, genders, stars, format, courts, points, limit, ranking, measure } = editSnap);
   editSnap = null; editing = false; view = "play";
   saveN();
 }
@@ -1054,6 +1182,7 @@ function saveEdit() {
   const removed = activeIdx().filter(p => !rows.some(r => r.from === p));
   rows.forEach(r => { if (r.from >= 0) T.players[r.from] = r.name; else { r.from = T.players.length; T.players.push(r.name); } });
   T.left = [...new Set([...(T.left || []), ...removed])];
+  T.stars = starNames().map(nm => rows.find(r => r.name === nm).from);
   if (format === "any") T.genders = null;
   else {
     T.genders = T.players.map((_, p) => (T.genders && T.genders[p]) || "");
@@ -1120,7 +1249,12 @@ app.addEventListener("click", e => {
   const b = e.target.closest("button"); if (!b) return;
   const act = b.dataset.act, v = b.dataset.v, i = +b.dataset.i;
 
-  if (act === "star") { syncInputs(); priority = i; saveN(); render(); }
+  // star toggles; a third star replaces the first of the two
+  if (act === "star") {
+    syncInputs();
+    stars = stars.includes(i) ? stars.filter(x => x !== i) : [...stars, i].slice(-2);
+    saveN(); render();
+  }
   else if (act === "opts") { syncInputs(); showOpts = showOpts === v ? null : v; render(); }
   else if (act === "format") { syncInputs(); format = v; showOpts = null; render(); }
   else if (act === "limit") { syncInputs(); limit = +v; showOpts = null; render(); }
@@ -1134,7 +1268,7 @@ app.addEventListener("click", e => {
     syncInputs();
     if (names.length <= 1) return;
     names.splice(i, 1); genders.splice(i, 1); if (editing) editFrom.splice(i, 1);
-    if (priority === i) priority = 0; else if (priority > i) priority--;
+    stars = stars.filter(x => x !== i).map(x => x > i ? x - 1 : x);
     saveN(); render();
   }
   else if (act === "create") {
@@ -1147,6 +1281,55 @@ app.addEventListener("click", e => {
   }
   else if (act === "editT") { startEdit(); render(); window.scrollTo(0, 0); }
   else if (act === "cancel") { endEdit(); render(); window.scrollTo(0, 0); }
+  else if (act === "delg") {
+    clearTimeout(armTimer);
+    if (armed === "delg" + v) { armed = null; deleteGame(+v); if (typeof open === "number") { open = null; winner = null; } saveT(); }
+    else { armed = "delg" + v; armTimer = setTimeout(() => { armed = null; render(); }, 3000); }
+    render();
+  }
+  else if (act === "pick") { picking = []; render(); }
+  else if (act === "pickx") { picking = null; render(); }
+  else if (act === "pickp") {
+    const p = +v;
+    picking = picking.includes(p) ? picking.filter(x => x !== p) : picking.length < 4 ? [...picking, p] : picking;
+    render();
+  }
+  else if (act === "pickadd") {
+    if (picking.length === 4) { addChosenGame(picking); picking = null; if (open === "final") open = null; saveT(); }
+    render();
+  }
+  else if (act === "hform") { histForm = true; render(); const t = document.getElementById("htitle"); if (t) t.focus(); }
+  else if (act === "hcancel") { histForm = false; render(); }
+  else if (act === "hsave") {
+    const title = (document.getElementById("htitle").value || "").trim() || "Padel";
+    const date = document.getElementById("hdate").value || todayISO();
+    const list = loadH();
+    T.title = title; T.date = date;
+    if (!T.histId || !list.some(x => x.id === T.histId)) { T.histId = Date.now().toString(36); list.push({ id: T.histId }); saveH(list); }
+    histForm = false; saveT(); render();
+  }
+  else if (act === "hlist") { showHist = !showHist; render(); }
+  else if (act === "hopen") {
+    // opening replaces the tournament on screen; ask twice unless it's saved too
+    clearTimeout(armTimer);
+    const e = loadH().find(x => x.id === v);
+    if (!e) return;
+    if (T && !T.histId && Object.keys(T.results).length && armed !== "hopen" + v) {
+      armed = "hopen" + v; armTimer = setTimeout(() => { armed = null; render(); }, 3000); render(); return;
+    }
+    armed = null; T = JSON.parse(JSON.stringify(e.T)); T.histId = e.id; saveT();
+    view = "play"; tab = "table"; open = null; winner = null; showHist = false;
+    render(); window.scrollTo(0, 0);
+  }
+  else if (act === "hdel") {
+    clearTimeout(armTimer);
+    if (armed === "hdel" + v) {
+      armed = null; saveH(loadH().filter(x => x.id !== v));
+      if (T && T.histId === v) { delete T.histId; saveT(); }
+    }
+    else { armed = "hdel" + v; armTimer = setTimeout(() => { armed = null; render(); }, 3000); }
+    render();
+  }
   else if (act === "one") {
     clearTimeout(armTimer);
     if (armed === "one") {

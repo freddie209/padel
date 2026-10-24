@@ -18,8 +18,10 @@ test.js       node test harness — runs the real code out of index.html
 
 State lives in two `localStorage` keys, both per-device:
 
-- `padel-tournament-v2` — the live tournament `{players, rounds, extras, results, countBest, format, genders, star, starts, final, courts, slot, target, limitGames, limit, ranking, measure, left}` (everything after `countBest` is optional, so older saves still load)
-- `padel-names-v2` — the last player list, starred index and genders, so setup is prefilled next time.
+- `padel-tournament-v2` — the live tournament `{players, rounds, extras, results, countBest, format, genders, star, starts, final, courts, slot, target, limitGames, limit, ranking, measure, left, stars, title, date, histId}` (everything after `countBest` is optional, so older saves still load)
+- `padel-names-v2` — the last player list, starred rows (`stars`) and genders, so setup is prefilled next time.
+- `padel-history-v1` — tournaments saved to history: `[{id, title, date, T}]`. A tournament with
+  `T.histId` keeps its saved copy up to date on every `saveT()`.
   Setup has three buttons in a row: Format, Court time, Settings. Settings holds courts, points,
   ranking and what wins; they start at their defaults every visit (1 court, first to 9, don't
   count extras, most points) — not saved.
@@ -40,9 +42,10 @@ Both are easy to break by accident. `test.js` guards both.
 **1. Every pair partners exactly once.** With `n` players there are
 `n(n-1)/2` possible pairs. Each game consumes two pairs, so when the pair count
 is odd one pair has to play together twice and those two players get an extra
-game. That happens at n = 6, 7, 10, 11, 14… The starred player (`priority` in
-setup) is **always** one of the two; the partner is drawn at random on each
-build.
+game. That happens at n = 6, 7, 10, 11, 14… Up to two players can be starred
+(`stars` in setup, `T.stars`; older saves have one `T.star`): two starred are
+exactly the pair that plays twice, one starred is always in it with a random
+partner, none means both are random.
 
 `buildSchedule(n, priority)` does this in three stages:
 - enumerate all pairs, append the duplicate pair if the count is odd
@@ -113,15 +116,16 @@ for fun, stored in `T.final` and never counted in the table. Anyone: 1st + 4th
 v 2nd + 3rd. Mixed formats: top boy + 2nd girl v 2nd boy + top girl. Adding a
 round or clearing scores removes it.
 
-**2. Ranking: everyone is ranked on the same number of games.** `countBest`
-is the fewest games any active player has. Under Settings, "If some play
-more games" (`T.ranking`) picks which of a player's games count:
-- `first` (default) — their first `countBest` games; extra games later
-  don't count (shown as "not counted" in their row).
-- `best` — their best `countBest` games; the worst are dropped.
-Freddie removed averages (Oct 2026) — **don't bring them back.** Saves with no
-`ranking` stay on `best`; `avg` saves from the short time it existed read as
-`first`.
+**2. Ranking when some play more games** (Settings, "If some play more
+games"; `T.ranking`). `countBest` is the fewest games any active player has.
+- `best` (default) — "Drop worst": everyone counts their best `countBest`
+  games, so an extra game replaces their worst score.
+- `avg` — "Average": every game counts, ranked per game. The table shows
+  totals while everyone has played the same number, then averages (one
+  decimal, or % of games won) once counts differ.
+- `first` — "Don't count": their first `countBest` games count; extras
+  don't (shown as "not counted").
+Saves with no `ranking` are `best`. Freddie asked for all three (Oct 2026).
 
 **Win by two** (`counted()`): a game that runs past the target counts as if it
 had stopped there, so 10–8, 13–11 and 15–13 at first to 9 all count 9–7. The
@@ -132,6 +136,20 @@ real score is stored and shown, with the counted one in brackets
 Games won" on setup, Points by default. `points` ranks on points in the counted games, ties on
 games won; `wins` ranks on games won in them, ties on points. In best-N with `wins`, a player's best games are wins first, then
 highest score.
+
+**Choose a game** (`addChosenGame()`, "+ Choose a game" on Rounds): tap four
+players, the first two against the next two, added as its own slot.
+**Delete** (`deleteGame()`): any game with no score has a "delete" (tap
+twice); later games, results, slots and round starts shift down.
+
+**Time left**: the tournament screen shows "about Xh Ym left" under the
+games count — slots that still have an unscored game × `minsPerGame`.
+
+**History** (subtle on purpose): "Save to history" is a small link under the
+tournament screen's footer; it asks for a title and date (`T.title`,
+`T.date`, `T.histId`). The title then shows in the eyebrow. Setup has a small
+"History · N saved" link listing them (title, date, players, who's top) with
+open and delete (both tap twice when they'd lose something).
 
 **Add a game** (`addGame()`): one game per court for spare time at the end.
 `localSpace()` maps active players to 0..m−1 with their games so far
@@ -176,7 +194,7 @@ menu → Install app.
 Live at https://freddie209.github.io/padel/ (GitHub Pages, `master`, root).
 Push to `master` to deploy.
 
-**After changing `index.html`, bump `CACHE` in `sw.js`** (`padel-v8` → `v9`…).
+**After changing `index.html`, bump `CACHE` in `sw.js`** (`padel-v9` → `v10`…).
 The service worker is cache-first, so without a bump an installed copy keeps
 serving the old version. With a bump, the new worker installs in the
 background on the next open and the page reloads itself once

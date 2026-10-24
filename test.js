@@ -112,6 +112,18 @@ for (let n = 4; n <= 14; n++) {
               `best-${lo} counts  max bench run ${worstRun}  extra game: ${extraNames}`);
 }
 
+/* ---------- 1a. stars: none, one or two ---------- */
+console.log("\nStars (6 players, so one pair plays twice)");
+for (let k = 0; k < 20; k++) {
+  const two = ctx.buildSchedule(6, [2, 4]);
+  check(JSON.stringify([...two.extras].sort()) === "[2,4]", `two stars: 2 and 4 get the extra, got ${two.extras}`);
+  const one = ctx.buildSchedule(6, [3]);
+  check(one.extras.includes(3), `one star: 3 gets the extra, got ${one.extras}`);
+  const none = ctx.buildSchedule(6, []);
+  check(none.extras.length === 2, "no stars: two players still get the extra");
+}
+console.log("  two starred always get it, one starred always does, none is random");
+
 /* ---------- 1b. mixed: games are always like against like ---------- */
 const kind = (p, sx) => sx[p[0]] !== sx[p[1]] ? "mf" : sx[p[0]] + sx[p[0]];
 for (const sameSex of [false, true]) {
@@ -363,10 +375,13 @@ check(JSON.stringify(rowOf("B").dropped) === "[9]", `first: B's third game (9) i
 setT({ ...T_of(), ranking: "best" }); ft = table();
 check(rowOf("B").total === 18 && rowOf("C").total === 14, `best: B 18 and C 14, got ${rowOf("B").total} and ${rowOf("C").total}`);
 check(JSON.stringify(rowOf("B").dropped) === "[3]", `best: B's worst (3) is dropped`);
-// a save from when average was the default reads as "first"
+// average: every game counts, per game
 setT({ ...T_of(), ranking: "avg" }); ft = table();
-check(rowOf("B").total === 12, `old "avg" saves rank on first games, got ${rowOf("B").total}`);
-console.log("  first: B 12, C 8   best: B 18, C 14");
+check(rowOf("B").avg === 7 && rowOf("B").dropped.length === 0, `avg: B averages 7 with nothing dropped, got ${rowOf("B").avg}`);
+// an older save with no ranking is "best"
+setT({ ...T_of(), ranking: undefined }); ft = table();
+check(rowOf("B").total === 18, `no ranking means best, got ${rowOf("B").total}`);
+console.log("  first: B 12, C 8   best: B 18, C 14   average: B 7");
 
 /* ---------- 5a. win by two counts as if stopped at the target ---------- */
 console.log("\nWin by two");
@@ -482,6 +497,34 @@ check(t1.courts === 2 && Math.max(...t1.slot) + 1 < t0.rounds.length, "and packs
 // cancelling puts the setup screen back as it was
 setT(t0); run("names = ['x','y']; courts = 3; startEdit(); names = ['changed']; endEdit();");
 check(run("names.join()") === "x,y" && run("courts") === 3 && T_of().players[1] === "Alex", "cancel restores setup and leaves the tournament alone");
+
+/* ---------- 8. choose a game, delete a game, history ---------- */
+console.log("\nChoose, delete, history");
+
+setT({ players: POOL.slice(0, 6), ranking: "best", countBest: 1, extras: null, courts: 1, starts: [0],
+       rounds: [[[0, 1], [2, 3]], [[0, 2], [1, 4]], [[3, 5], [1, 2]]], slot: [0, 1, 2],
+       results: { 0: { a: 9, b: 4 }, 2: { a: 6, b: 9 } } });
+run("addChosenGame([5, 4, 0, 3])");
+let tc = T_of();
+check(JSON.stringify(tc.rounds[3]) === "[[4,5],[0,3]]" && tc.slot[3] === 3, `chosen game added as its own slot, got ${JSON.stringify(tc.rounds[3])}`);
+
+run("deleteGame(0)");
+check(T_of().rounds.length === 4, "a scored game can't be deleted");
+run("deleteGame(1)");
+tc = T_of();
+check(tc.rounds.length === 3 && JSON.stringify(tc.rounds[1]) === "[[3,5],[1,2]]", "the unscored game is gone and the rest move up");
+check(tc.results[0].a === 9 && tc.results[1].b === 9 && !tc.results[2], `results move with their games, got ${JSON.stringify(tc.results)}`);
+check(JSON.stringify(tc.slot) === "[0,1,2]", `slots close up, got ${JSON.stringify(tc.slot)}`);
+
+// saved to history: scoring keeps the saved copy up to date
+run(`T.histId = "h1"; T.title = "Sister's birthday"; T.date = "2026-10-24"; localStorage.setItem("padel-history-v1", JSON.stringify([{ id: "h1" }])); saveT();`);
+let saved = JSON.parse(run(`localStorage.getItem("padel-history-v1")`))[0];
+check(saved.title === "Sister's birthday" && saved.T.rounds.length === 3, "saving writes title, date and tournament");
+run(`T.results[2] = { a: 9, b: 1 }; saveT();`);
+saved = JSON.parse(run(`localStorage.getItem("padel-history-v1")`))[0];
+check(saved.T.results[2].a === 9, "a new score updates the saved copy");
+check(run(`leaderOf(JSON.parse(localStorage.getItem("padel-history-v1"))[0].T)`) !== null, "the history list can name a leader");
+console.log("  choose, delete and history all behave");
 
 console.log(pass ? "\nALL CHECKS PASSED" : "\nFAILURES FOUND");
 process.exit(pass ? 0 : 1);
